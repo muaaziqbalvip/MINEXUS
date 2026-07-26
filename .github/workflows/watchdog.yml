@@ -1,0 +1,27 @@
+name: MI NEXUS Watchdog
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # checks every 15 minutes
+  workflow_dispatch: {}
+
+jobs:
+  check-and-restart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if bot workflow is running
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          RUNNING=$(gh run list --workflow=mi_nexus_bot.yml --repo "$REPO" --status in_progress --limit 1 --json databaseId --jq 'length')
+          echo "running=$RUNNING" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger bot workflow if not running
+        if: steps.check.outputs.running == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          gh workflow run mi_nexus_bot.yml --repo "$REPO"
