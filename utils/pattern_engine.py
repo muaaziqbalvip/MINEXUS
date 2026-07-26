@@ -72,6 +72,27 @@ PATTERN_RELIABILITY = {
 
     # --- Fallback ---
     "Plain Candle Momentum": 0.30,
+
+    # --- Additional subtle/small patterns ---
+    "Doji Star Bullish": 0.55,
+    "Doji Star Bearish": 0.55,
+    "Homing Pigeon": 0.55,
+    "Matching Low": 0.50,
+    "Matching High": 0.50,
+    "Separating Lines Bullish": 0.50,
+    "Separating Lines Bearish": 0.50,
+    "Ladder Bottom": 0.65,
+    "Ladder Top": 0.60,
+    "Concealing Baby Swallow": 0.68,
+    "Unique Three River Bottom": 0.72,
+    "Two Crows": 0.55,
+    "Downside Gap Three Methods": 0.55,
+    "Long Day Bullish": 0.35,
+    "Long Day Bearish": 0.35,
+    "Short Day": 0.20,
+    "Rickshaw Man": 0.30,
+    "Gapping Doji Bullish": 0.45,
+    "Gapping Doji Bearish": 0.45,
 }
 
 
@@ -208,6 +229,41 @@ def detect_patterns(candles):
         if abs(c1.body_top - c2.body_bottom) < c1.total_range * 0.05 and c2.is_bullish() and c1.is_bearish():
             add("Meeting Lines Bearish", "bearish")
 
+        # Doji Star: long candle followed by a doji that gaps away from the body
+        if c1.body_ratio() < 0.12 and c2.body_ratio() > 0.5:
+            if c2.is_bearish() and c1.body_bottom > c2.body_top:
+                add("Doji Star Bullish", "bullish")
+            elif c2.is_bullish() and c1.body_top < c2.body_bottom:
+                add("Doji Star Bearish", "bearish")
+
+        # Homing Pigeon: small bearish candle fully inside a larger bearish candle (bullish reversal)
+        if (c2.is_bearish() and c1.is_bearish() and c1.body_ratio() < 0.5
+                and c1.body_top <= c2.body_top and c1.body_bottom >= c2.body_bottom):
+            add("Homing Pigeon", "bullish")
+
+        # Matching Low / High: two candles closing at (almost) the same level
+        if (c2.is_bearish() and c1.is_bearish()
+                and abs(c1.body_bottom - c2.body_bottom) < c1.total_range * 0.04):
+            add("Matching Low", "bullish")
+        if (c2.is_bullish() and c1.is_bullish()
+                and abs(c1.body_top - c2.body_top) < c1.total_range * 0.04):
+            add("Matching High", "bearish")
+
+        # Separating Lines: opposite-colored candles that open at the same level, trend continues
+        if (abs(c1.body_bottom - c2.body_bottom) < c1.total_range * 0.04
+                and c2.is_bearish() and c1.is_bullish() and c1.body_ratio() > 0.5):
+            add("Separating Lines Bullish", "bullish")
+        if (abs(c1.body_top - c2.body_top) < c1.total_range * 0.04
+                and c2.is_bullish() and c1.is_bearish() and c1.body_ratio() > 0.5):
+            add("Separating Lines Bearish", "bearish")
+
+        # Gapping Doji: doji that gaps clearly away from the prior candle's body
+        if c1.body_ratio() < 0.12:
+            if c2.is_bearish() and c1.body_bottom > c2.body_top + c2.total_range * 0.03:
+                add("Gapping Doji Bullish", "bullish")
+            elif c2.is_bullish() and c1.body_top < c2.body_bottom - c2.total_range * 0.03:
+                add("Gapping Doji Bearish", "bearish")
+
     # ================= THREE-CANDLE PATTERNS =================
     if c3:
         mid_is_doji = c2.body_ratio() < 0.12
@@ -295,6 +351,56 @@ def detect_patterns(candles):
                 and c2.body_bottom > c3.body_top
                 and c1.body_top > c2.body_top and c1.body_bottom < c2.body_bottom):
             add("Upside Gap Two Crows", "bearish")
+
+        # Two Crows (simpler variant: bullish then two bearish candles eating into the body)
+        if (c3.is_bullish() and c3.body_ratio() > 0.5 and c2.is_bearish() and c1.is_bearish()
+                and c2.body_top > c3.body_top and c1.body_bottom > c3.body_bottom
+                and c1.body_bottom < c2.body_bottom):
+            add("Two Crows", "bearish")
+
+        # Ladder Bottom (three falling candles then a small-bodied reversal candle with a gap)
+        if (c3.is_bearish() and c2.is_bearish() and c1.is_bullish()
+                and c3.body_top > c2.body_top > (c2.body_bottom)
+                and c1.lower_wick_ratio() < 0.2 and c1.body_ratio() > 0.3
+                and c1.body_bottom >= c2.body_bottom):
+            add("Ladder Bottom", "bullish")
+
+        # Ladder Top (three rising candles then a small-bodied reversal candle)
+        if (c3.is_bullish() and c2.is_bullish() and c1.is_bearish()
+                and c3.body_bottom < c2.body_bottom < c2.body_top
+                and c1.upper_wick_ratio() < 0.2 and c1.body_ratio() > 0.3
+                and c1.body_top <= c2.body_top):
+            add("Ladder Top", "bearish")
+
+        # Concealing Baby Swallow (two black marubozu, then a candle whose body engulfs prior wick)
+        if (c3.is_bearish() and c3.body_ratio() > 0.85
+                and c2.is_bearish() and c2.body_ratio() > 0.85
+                and c1.is_bearish() and c1.body_top > c2.body_bottom
+                and c1.wick_bottom < c2.body_bottom):
+            add("Concealing Baby Swallow", "bullish")
+
+        # Unique Three River Bottom (long bearish, small bearish with lower low, small bullish)
+        if (c3.is_bearish() and c3.body_ratio() > 0.5
+                and c2.is_bearish() and c2.body_bottom < c3.body_bottom and c2.body_ratio() < 0.4
+                and c1.is_bullish() and c1.body_ratio() < 0.4 and c1.body_top < c2.body_top):
+            add("Unique Three River Bottom", "bullish")
+
+        # Downside Gap Three Methods (two bearish candles with a gap, then a bullish candle closing the gap)
+        if (c3.is_bearish() and c2.is_bearish()
+                and c2.body_top < c3.body_bottom
+                and c1.is_bullish() and c1.body_bottom <= c2.body_top and c1.body_top >= c3.body_bottom):
+            add("Downside Gap Three Methods", "bearish")
+
+    # ================= CANDLE-SIZE CLASSIFICATION (context, not a signal) =================
+    if c1.body_ratio() > 0.6 and c1.total_range > 0:
+        add("Long Day Bullish" if c1.is_bullish() else "Long Day Bearish",
+            "bullish" if c1.is_bullish() else "bearish")
+    elif c1.body_ratio() < 0.2:
+        add("Short Day", "neutral")
+
+    if (c1.body_ratio() < 0.15 and 0.2 < c1.upper_wick_ratio() < 0.5
+            and 0.2 < c1.lower_wick_ratio() < 0.5):
+        add("Rickshaw Man", "neutral")
 
     # ================= FIVE-CANDLE PATTERNS =================
     if c5:

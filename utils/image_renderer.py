@@ -200,7 +200,7 @@ def render_result_card(
 
     # ---------------- Details Card ----------------
     details_top = card_bottom + 24
-    details_bottom = details_top + 400
+    details_bottom = details_top + 440
     details_box = (40, details_top, CANVAS_W - 40, details_bottom)
     _rounded_rect(draw, details_box, radius=28, fill=CARD_BG, outline=(50, 70, 65), width=2)
 
@@ -230,7 +230,7 @@ def render_result_card(
     dy += 42
 
     breakdown = prediction.get("breakdown", [])
-    top_patterns = sorted(breakdown, key=lambda p: p["reliability"], reverse=True)[:3]
+    top_patterns = sorted(breakdown, key=lambda p: p["reliability"], reverse=True)[:4]
     pat_font = _font(FONT_REG, 24)
     for p in top_patterns:
         sig_symbol = "▲" if p["signal"] == "bullish" else ("▼" if p["signal"] == "bearish" else "●")

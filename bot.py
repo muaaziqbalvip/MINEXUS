@@ -25,7 +25,7 @@ from utils.pattern_engine import predict_next_candle
 from utils.image_renderer import render_result_card
 from utils.pair_detector import detect_pair_name
 from utils.sticker_generator import (
-    generate_direction_sticker, generate_session_start_sticker, generate_result_sticker
+    get_direction_sticker, get_session_start_sticker, get_result_sticker
 )
 
 # ----------------------------------------------------------------------
@@ -329,8 +329,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tf_label = TF_LABELS.get(tf, "1 Min")
         group_name = get_group_title(group_id)
 
-        sticker_path = generate_session_start_sticker(
-            pair_name=pair_name, timeframe=tf_label,
+        sticker_path = get_session_start_sticker(
             output_path=f"/tmp/mi_nexus_session_sticker_{user.id}.webp"
         )
 
@@ -342,8 +341,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            with open(sticker_path, "rb") as sticker:
-                await context.bot.send_sticker(chat_id=group_id, sticker=sticker)
+            if sticker_path:
+                with open(sticker_path, "rb") as sticker:
+                    await context.bot.send_sticker(chat_id=group_id, sticker=sticker)
             await context.bot.send_message(chat_id=group_id, text=session_caption, parse_mode="Markdown")
             await update.message.reply_text(
                 f"✅ Session-start post sent to *{group_name}*!", parse_mode="Markdown"
@@ -573,8 +573,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         sticker_path = None
         if signal_direction:
-            sticker_path = generate_direction_sticker(
-                signal_direction, signal_confidence,
+            sticker_path = get_direction_sticker(
+                signal_direction,
                 output_path=f"/tmp/mi_nexus_broadcast_sticker_{user_id}.webp"
             )
 
@@ -602,7 +602,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_signal_result(signal_id, result.upper())
 
         is_win = result.upper() == "WIN"
-        result_sticker_path = generate_result_sticker(
+        result_sticker_path = get_result_sticker(
             is_win, output_path=f"/tmp/mi_nexus_result_sticker_{user_id}_{signal_id}.webp"
         )
 
@@ -623,8 +623,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent = 0
         for chat_id, title in target_groups:
             try:
-                with open(result_sticker_path, "rb") as sticker:
-                    await context.bot.send_sticker(chat_id=chat_id, sticker=sticker)
+                if result_sticker_path:
+                    with open(result_sticker_path, "rb") as sticker:
+                        await context.bot.send_sticker(chat_id=chat_id, sticker=sticker)
                 await context.bot.send_message(chat_id=chat_id, text=result_caption, parse_mode="Markdown")
                 sent += 1
             except Exception as e:
@@ -716,13 +717,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(output_path, "rb") as img:
             await update.message.reply_photo(photo=img, caption=caption, parse_mode="Markdown")
 
-        # Send matching UP/DOWN sticker
-        sticker_path = generate_direction_sticker(
-            prediction["direction"], prediction["confidence"],
+        # Send matching UP/DOWN sticker (only if you've provided one)
+        sticker_path = get_direction_sticker(
+            prediction["direction"],
             output_path=f"/tmp/mi_nexus_sticker_{user.id}_{update.message.message_id}.webp"
         )
-        with open(sticker_path, "rb") as sticker:
-            await update.message.reply_sticker(sticker=sticker)
+        if sticker_path:
+            with open(sticker_path, "rb") as sticker:
+                await update.message.reply_sticker(sticker=sticker)
 
         # Store this signal so it can be broadcast to groups on request
         context.user_data["last_signal_path"] = output_path
@@ -740,8 +742,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         chat_id=selected_group, photo=img,
                         caption=caption, parse_mode="Markdown"
                     )
-                with open(sticker_path, "rb") as sticker:
-                    await context.bot.send_sticker(chat_id=selected_group, sticker=sticker)
+                if sticker_path:
+                    with open(sticker_path, "rb") as sticker:
+                        await context.bot.send_sticker(chat_id=selected_group, sticker=sticker)
                 await update.message.reply_text(
                     f"📢 Auto-broadcast: sent to *{get_group_title(selected_group)}*",
                     parse_mode="Markdown"

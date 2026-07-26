@@ -18,18 +18,21 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v4 — 55+ Patterns, VIP Stickers, Auto-Broadcast, Win/Loss Tracking)
+## Features (v5 — 74+ Patterns, Your Own Stickers Only, Auto-Broadcast, Win/Loss Tracking)
 
 - 🔐 Password-gated access (`BOT_PASSWORD` secret, default `19620MINEXUS`)
 - 📸 Send any chart screenshot → instant analysis
-- 🕯️ Detects **55+ pattern variants** across the full classic candlestick
-  library (Nison/Bulkowski reference set) — 1, 2, 3, and 5-candle formations:
+- 🕯️ Detects **74+ pattern variants** — the full classic candlestick library
+  (Nison/Bulkowski reference set) plus extra subtle/small formations:
   all Doji types, Hammer/Hanging Man, Shooting Star/Inverted Hammer, Marubozu,
   Belt Hold, Engulfing, Piercing/Dark Cloud, Tweezer, Harami (+ Cross),
   On-Neck/In-Neck/Thrusting, Kicker, Meeting Lines, Morning/Evening Star (+ Doji),
   Abandoned Baby, Three Soldiers/Crows, Three Inside/Outside Up/Down,
   Stick Sandwich, Tri-Star, Advance Block, Deliberation, Upside Gap Two Crows,
-  Rising/Falling Three Methods, Mat Hold
+  Rising/Falling Three Methods, Mat Hold, Doji Star, Homing Pigeon,
+  Matching Low/High, Separating Lines, Ladder Top/Bottom, Concealing Baby
+  Swallow, Unique Three River Bottom, Two Crows, Downside Gap Three Methods,
+  Long/Short Day classification, Rickshaw Man
 - 💹 **Pair/Asset name auto-detection** via OCR, with a live-price fallback for
   Quotex-style screens that don't show a pair name on the chart itself
 - 🎯 **Tuned candle detection** — filters out UI icons, trade markers, and
@@ -37,14 +40,14 @@ Treat it as an educational aid, not financial advice.
   Quotex screenshots)
 - ⬆️⬇️ Next-candle UP/DOWN prediction with confidence % + strength rating
 - 📋 Per-pattern reliability breakdown shown on the result card
-- 🎨 **VIP-style stickers** for UP / DOWN / Session Start / WIN / LOSS —
-  **use YOUR OWN sticker files** (drop them in `assets/stickers/`) or let the
-  bot auto-generate a gold-ring VIP fallback design automatically
+- 🎨 **Your own stickers, sent automatically** for UP / DOWN / Session Start /
+  WIN / LOSS — just drop your files in `assets/stickers/`; the bot never
+  generates stickers itself, it only sends what you provide
 - 📢 **Auto-Broadcast toggle (ON/OFF)** — when ON, every signal you analyze is
   sent straight to your chosen group with zero manual taps; when OFF, you get
   a one-tap "Send to Group" button instead
 - 🎬 **Manual Session-Start posts** — pick a group, type a pair name (e.g.
-  "EUR/USD OTC"), and a VIP session-start sticker + announcement goes out
+  "EUR/USD OTC"), and your session-start sticker + announcement goes out
   telling everyone to open that pair
 - ✅❌ **WIN / LOSS result tracking** — after every signal, tap WIN or LOSS;
   the bot posts a matching result sticker + message to your group and keeps
@@ -58,20 +61,24 @@ Treat it as an educational aid, not financial advice.
 - 📊 Per-user signal history/stats + win/loss record
 - 🚀 Runs 24/7 via GitHub Actions (auto-restart workflow + watchdog)
 
-### 🎨 Using Your Own Stickers
-Drop your own `.webp` (preferred), `.png`, or `.jpg` files into `assets/stickers/`
-with these exact names — the bot will use them automatically instead of the
-auto-generated fallback:
+### 🎨 Stickers — 100% Your Own, No Auto-Generation
+This bot does **not** generate any stickers itself. You provide your own
+sticker files, and the bot simply sends the right one at the right moment.
+Drop your files into `assets/stickers/` with these **exact names**:
 
-| Slot | Filename |
-|------|----------|
-| UP signal | `up.webp` |
-| DOWN signal | `down.webp` |
-| Session start | `session_start.webp` |
-| Win result | `win.webp` |
-| Loss result | `loss.webp` |
+| Slot | Filename | Sent when... |
+|------|----------|--------------|
+| UP signal | `up.webp` | A chart analysis predicts UP |
+| DOWN signal | `down.webp` | A chart analysis predicts DOWN |
+| Session start | `session_start.webp` | You post a manual "Session Start" to a group |
+| Win result | `win.webp` | You tap the ✅ WIN button after a trade |
+| Loss result | `loss.webp` | You tap the ❌ LOSS button after a trade |
 
-If a file is missing, the bot just auto-generates that one sticker — nothing breaks.
+Accepted formats: `.webp` (ideal, no conversion needed), `.png`, `.jpg` (auto-
+converted to WEBP on the fly). If a file is missing for a given slot, the bot
+simply skips sending a sticker for that one moment — everything else (the
+signal card, the caption, the broadcast) still goes out normally, so nothing
+ever breaks or crashes because a sticker isn't there yet.
 
 ### 🎛️ A note on button colors
 Telegram's native inline buttons (the kind this bot uses) can't have custom
@@ -100,12 +107,12 @@ mi_nexus_bot/
 │   ├── candle_detector.py      # OpenCV candle detection
 │   ├── pattern_engine.py       # 55+ pattern rules + prediction scoring
 │   ├── pair_detector.py        # OCR-based pair/asset name detection
-│   ├── sticker_generator.py    # Custom-sticker lookup + VIP fallback generator
+│   ├── sticker_generator.py    # Looks up YOUR sticker files (no auto-gen)
 │   └── image_renderer.py       # 9:16 result card generator
 ├── assets/
 │   ├── logo.png                # MI NEXUS logo
 │   └── stickers/                # 👉 put YOUR custom sticker files here
-│       ├── up.webp              #    (optional — auto-generated if missing)
+│       ├── up.webp              #    (skipped if missing, no auto-gen)
 │       ├── down.webp
 │       ├── session_start.webp
 │       ├── win.webp
