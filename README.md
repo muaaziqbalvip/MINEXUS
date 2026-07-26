@@ -18,7 +18,7 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v2 — Premium Upgrade)
+## Features (v3 — Real-Screenshot Fixes + Stickers)
 
 - 🔐 Password-gated access (`BOT_PASSWORD` secret, default `19620MINEXUS`)
 - 📸 Send any chart screenshot → instant analysis
@@ -26,18 +26,32 @@ Treat it as an educational aid, not financial advice.
   Hanging Man, Marubozu, Spinning Top, Bullish/Bearish Engulfing, Piercing Line,
   Dark Cloud Cover, Tweezer Top/Bottom, Harami Bullish/Bearish, Morning Star,
   Evening Star, Three White Soldiers, Three Black Crows, Rising/Falling Three Methods
-- 💹 **Pair/Asset name auto-detection** via OCR (reads "EUR/USD OTC" etc. from screenshot)
+- 💹 **Pair/Asset name auto-detection** via OCR, with a live-price fallback for
+  Quotex-style screens that don't show a pair name on the chart itself
+- 🎯 **Improved candle detection** — filters out UI icons, trade markers, and
+  price badges that were previously misread as candles (tuned against real
+  Quotex screenshots)
 - ⬆️⬇️ Next-candle UP/DOWN prediction with confidence % + strength rating
-  (WEAK / MODERATE / STRONG / VERY STRONG)
 - 📋 Per-pattern reliability breakdown shown on the result card
+- 🎨 **UP/DOWN branded stickers** — sent automatically after every signal, and
+  included in every group broadcast
 - ⏱️ Per-user timeframe setting (5 sec → 1 hour)
 - 🖼️ Premium 9:16 branded result card (MI NEXUS logo, glow effects, pair badge,
   strength badge, confidence bar, pattern list)
 - 💎 Emoji-rich premium Telegram captions
-- 👥 Works in groups — auto-registers group, lists active groups
-- 📢 **One-tap broadcast** — send any signal to one or all connected groups
+- 👥 Groups **only receive broadcasted signals** — the bot never analyzes
+  images posted directly in a group (private-chat analysis only, then you
+  choose which group(s) to share the result with)
+- 📢 One-tap broadcast — send any signal (+ matching sticker) to one or all groups
 - 📊 Per-user signal history/stats
 - 🚀 Runs 24/7 via GitHub Actions (auto-restart workflow + watchdog)
+
+### ⚠️ Known OCR limitation (honest note)
+Quotex's actual trading screen usually shows **only a live price**, not the
+pair name (e.g. "EUR/USD"), directly on the chart — the pair is chosen on a
+separate screen. So on real Quotex screenshots, pair-name OCR will often come
+back empty; the card falls back to "Chart Analysis" in that case. This is a
+platform-UI limitation, not a bug in the OCR itself.
 
 ---
 
@@ -51,6 +65,7 @@ mi_nexus_bot/
 │   ├── candle_detector.py      # OpenCV candle detection
 │   ├── pattern_engine.py       # Pattern rules + prediction scoring
 │   ├── pair_detector.py        # OCR-based pair/asset name detection
+│   ├── sticker_generator.py    # UP/DOWN branded sticker generator
 │   └── image_renderer.py       # 9:16 result card generator
 ├── assets/
 │   └── logo.png                # MI NEXUS logo

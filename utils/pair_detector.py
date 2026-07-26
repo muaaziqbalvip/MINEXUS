@@ -30,6 +30,32 @@ def _preprocess_for_ocr(crop):
     return thresh
 
 
+PRICE_REGEX = re.compile(r"\b(\d{1,6}\.\d{2,6})\b")
+
+
+def _detect_price_label(image_path):
+    """
+    Fallback: Quotex-style screenshots often show only a live price badge
+    (e.g. "3195.26") rather than a pair name. OCR the right-edge strip
+    where that badge usually sits.
+    """
+    img = cv2.imread(image_path)
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    # price badge is typically top-right area of the chart
+    region = img[0:int(h * 0.15), int(w * 0.65):w]
+    if region.size == 0:
+        return None
+    try:
+        processed = _preprocess_for_ocr(region)
+        text = pytesseract.image_to_string(processed, config="--psm 7")
+    except Exception:
+        return None
+    match = PRICE_REGEX.search(text)
+    return match.group(1) if match else None
+
+
 def detect_pair_name(image_path):
     """
     Scans the top region of the screenshot (where broker platforms usually
@@ -72,4 +98,14 @@ def detect_pair_name(image_path):
                 best_match = pair_str
                 break
 
-    return best_match
+    if best_match:
+        return best_match
+
+    # Fallback: no pair-name text found (common on Quotex trade screens which
+    # only show a live price badge, not the asset name). Surface the price
+    # instead of a generic placeholder so the card still shows something useful.
+    price = _detect_price_label(image_path)
+    if price:
+        return f"Live Price: {price}"
+
+    return None

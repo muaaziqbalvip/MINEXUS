@@ -65,16 +65,68 @@ def crop_chart_area(img):
     """
     Attempts to isolate the actual chart/candle area, cropping away
     side panels, top bars, and bottom toolbars common in broker UIs.
-    Falls back to full image if detection is inconclusive.
+    Quotex-style layout: top strip has icons/timer, right strip has price
+    axis labels, bottom strip may have RSI/indicator panel.
     """
     h, w = img.shape[:2]
-    # Heuristic crop: trading platforms usually keep candles in the
-    # central 80% width and 75% height band.
-    top = int(h * 0.05)
-    bottom = int(h * 0.90)
-    left = int(w * 0.02)
-    right = int(w * 0.92)  # avoid right-side price axis
+    top = int(h * 0.10)      # skip top icon/timer row
+    bottom = int(h * 0.85)   # skip bottom indicator panel area
+    left = int(w * 0.01)
+    right = int(w * 0.88)    # avoid right-side price axis + price badge
     return img[top:bottom, left:right], (left, top)
+
+
+def _split_merged_blob(mask, x, y, w, h, reference_w):
+    """
+    A contour wider than expected likely contains multiple touching candles.
+    Look at the column-wise pixel count (density profile) within the blob's
+    bounding box; local minima (valleys) mark boundaries between candles.
+    Falls back to even-width slicing if no clear valleys are found.
+    """
+    roi = mask[y:y + h, x:x + w]
+    col_density = roi.sum(axis=0) / 255  # pixel count per column
+
+    n_slices = max(1, round(w / reference_w))
+    if n_slices <= 1 or w < 10:
+        return [(x, y, w, h)]
+
+    # Find valley points near expected slice boundaries
+    expected_slice_w = w / n_slices
+    boundaries = [0]
+    search_radius = max(2, int(expected_slice_w * 0.3))
+
+    for i in range(1, n_slices):
+        expected_pos = int(i * expected_slice_w)
+        lo = max(1, expected_pos - search_radius)
+        hi = min(w - 1, expected_pos + search_radius)
+        if lo >= hi:
+            boundaries.append(expected_pos)
+            continue
+        window = col_density[lo:hi]
+        if len(window) == 0:
+            boundaries.append(expected_pos)
+            continue
+        min_idx = lo + int(window.argmin())
+        boundaries.append(min_idx)
+    boundaries.append(w)
+
+    boxes = []
+    for i in range(len(boundaries) - 1):
+        bx0, bx1 = boundaries[i], boundaries[i + 1]
+        if bx1 <= bx0:
+            continue
+        # Recompute tight y-bounds within this slice for a cleaner body/wick fit
+        slice_roi = roi[:, bx0:bx1]
+        rows_with_pixels = slice_roi.sum(axis=1) > 0
+        if rows_with_pixels.any():
+            y_indices = rows_with_pixels.nonzero()[0]
+            sy = y + int(y_indices.min())
+            sh = int(y_indices.max() - y_indices.min()) + 1
+        else:
+            sy, sh = y, h
+        boxes.append((x + bx0, sy, bx1 - bx0, sh))
+
+    return boxes if boxes else [(x, y, w, h)]
 
 
 def detect_candles(image_path):
@@ -100,13 +152,41 @@ def detect_candles(image_path):
     candles = []
     for color_name, mask in (("green", green_mask), ("red", red_mask)):
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        raw_rects = []
         for cnt in contours:
             x, y, w, h = cv2.boundingRect(cnt)
+            area = cv2.contourArea(cnt)
+            rect_area = w * h
             if w < 2 or h < 4:
                 continue  # noise
-            candles.append({
-                "x": x, "y": y, "w": w, "h": h, "color": color_name
-            })
+            if rect_area == 0:
+                continue
+            fill_ratio = area / rect_area
+            if fill_ratio < 0.55:
+                continue
+            aspect = w / h
+            if 0.75 <= aspect <= 1.35 and w < 40 and h < 40:
+                continue
+            raw_rects.append((x, y, w, h))
+
+        if not raw_rects:
+            continue
+
+        # Estimate a "typical" single-candle body width from narrower rects
+        # (wicks are thin; bodies are wider). Use the smallest quartile of
+        # widths among wick-like thin shapes as a floor, and median overall.
+        widths = sorted(r[2] for r in raw_rects)
+        min_w = widths[0]
+        median_w = widths[len(widths) // 2]
+        reference_w = min_w if min_w >= 6 else median_w
+
+        for (x, y, w, h) in raw_rects:
+            if reference_w > 0 and w > reference_w * 1.6:
+                sub_boxes = _split_merged_blob(mask, x, y, w, h, reference_w)
+                for (sx, sy, sw, sh) in sub_boxes:
+                    candles.append({"x": sx, "y": sy, "w": sw, "h": sh, "color": color_name})
+            else:
+                candles.append({"x": x, "y": y, "w": w, "h": h, "color": color_name})
 
     if not candles:
         return [], cropped, offset
@@ -122,10 +202,21 @@ def detect_candles(image_path):
             candle_objs.append(candle)
 
     candle_objs.sort(key=lambda c: c.x)
+
+    # Remove outlier columns whose width is wildly different from the
+    # median candle width (helps drop stray UI line/marker fragments)
+    if len(candle_objs) >= 4:
+        widths = sorted(c.width for c in candle_objs)
+        median_w = widths[len(widths) // 2]
+        candle_objs = [
+            c for c in candle_objs
+            if median_w * 0.35 <= c.width <= median_w * 3.0
+        ]
+
     return candle_objs, cropped, offset
 
 
-def _group_by_column(candles, x_tolerance=6):
+def _group_by_column(candles, x_tolerance=4):
     """Groups wick + body rectangles that belong to the same candle column."""
     groups = []
     used = [False] * len(candles)

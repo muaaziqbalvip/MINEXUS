@@ -24,6 +24,7 @@ from utils.candle_detector import detect_candles
 from utils.pattern_engine import predict_next_candle
 from utils.image_renderer import render_result_card
 from utils.pair_detector import detect_pair_name
+from utils.sticker_generator import generate_direction_sticker
 
 # ----------------------------------------------------------------------
 # CONFIG
@@ -172,7 +173,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type in ("group", "supergroup"):
         register_group(chat.id, chat.title or "Unnamed Group")
         await update.message.reply_text(
-            "🟢 *MI NEXUS* activated in this group!\nSend a chart screenshot to get a signal.",
+            "🟢 *MI NEXUS* activated in this group!\n\n"
+            "This group will now receive broadcasted signals sent from "
+            "the bot's private chat. The bot does *not* analyze images "
+            "posted directly here.",
             parse_mode="Markdown"
         )
         return
@@ -344,6 +348,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = data.replace("broadcast_", "")
         signal_path = context.user_data.get("last_signal_path")
         signal_caption = context.user_data.get("last_signal_caption")
+        signal_direction = context.user_data.get("last_signal_direction")
+        signal_confidence = context.user_data.get("last_signal_confidence")
 
         if not signal_path or not os.path.exists(signal_path):
             await query.edit_message_text("⚠️ Signal expired. Please analyze a new chart.")
@@ -351,6 +357,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         groups = list_groups()
         targets = groups if target == "all" else [g for g in groups if str(g[0]) == target]
+
+        # Generate the matching UP/DOWN sticker once for this broadcast
+        sticker_path = None
+        if signal_direction:
+            sticker_path = generate_direction_sticker(
+                signal_direction, signal_confidence,
+                output_path=f"/tmp/mi_nexus_broadcast_sticker_{user_id}.webp"
+            )
 
         sent_count = 0
         for chat_id, title in targets:
@@ -360,20 +374,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         chat_id=chat_id, photo=img,
                         caption=signal_caption, parse_mode="Markdown"
                     )
+                if sticker_path and os.path.exists(sticker_path):
+                    with open(sticker_path, "rb") as sticker:
+                        await context.bot.send_sticker(chat_id=chat_id, sticker=sticker)
                 sent_count += 1
             except Exception as e:
                 logger.warning(f"Failed to broadcast to {chat_id}: {e}")
 
-        await query.edit_message_text(f"✅ Signal sent to {sent_count} group(s)!")
+        await query.edit_message_text(f"✅ Signal + sticker sent to {sent_count} group(s)!")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
 
-    is_group = chat.type in ("group", "supergroup")
+    if chat.type in ("group", "supergroup"):
+        # Groups only RECEIVE broadcasted signals - the bot never analyzes
+        # images posted directly inside a group chat.
+        return
 
-    if not is_group and not is_unlocked(user.id):
+    if not is_unlocked(user.id):
         await update.message.reply_text("🔐 Please enter the access password first. Use /start")
         return
 
@@ -401,10 +421,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         prediction = predict_next_candle(candles)
-        tf_code = get_timeframe(user.id) if not is_group else "1m"
+        tf_code = get_timeframe(user.id)
         tf_label = TF_LABELS.get(tf_code, "1 Min")
 
-        pair_name = detect_pair_name(local_path) or "Asset / Pair"
+        pair_name = detect_pair_name(local_path) or "Chart Analysis"
 
         output_path = f"/tmp/mi_nexus_result_{user.id}_{update.message.message_id}.png"
         render_result_card(
@@ -417,8 +437,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             output_path=output_path,
         )
 
-        if not is_group:
-            log_signal(user.id, prediction["direction"], prediction["confidence"], tf_code)
+        log_signal(user.id, prediction["direction"], prediction["confidence"], tf_code)
 
         is_up = prediction["direction"] == "UP"
         dir_emoji = "🟢⬆️" if is_up else "🔴⬇️"
@@ -440,28 +459,37 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         with open(output_path, "rb") as img:
-            sent_msg = await update.message.reply_photo(photo=img, caption=caption, parse_mode="Markdown")
+            await update.message.reply_photo(photo=img, caption=caption, parse_mode="Markdown")
 
-        # Offer broadcast to groups (only for private chat, unlocked users)
-        if not is_group:
-            groups = list_groups()
-            if groups:
-                context.user_data["last_signal_path"] = output_path
-                context.user_data["last_signal_caption"] = caption
-                keyboard = [[InlineKeyboardButton(
-                    f"📢 Send to {title}", callback_data=f"broadcast_{chat_id}"
-                )] for chat_id, title in groups[:8]]
-                keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", callback_data="broadcast_all")])
-                await update.message.reply_text(
-                    "Want to share this signal to your groups?",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
+        # Send matching UP/DOWN sticker
+        sticker_path = generate_direction_sticker(
+            prediction["direction"], prediction["confidence"],
+            output_path=f"/tmp/mi_nexus_sticker_{user.id}_{update.message.message_id}.webp"
+        )
+        with open(sticker_path, "rb") as sticker:
+            await update.message.reply_sticker(sticker=sticker)
+
+        # Store this signal so it can be broadcast to groups on request
+        context.user_data["last_signal_path"] = output_path
+        context.user_data["last_signal_caption"] = caption
+        context.user_data["last_signal_direction"] = prediction["direction"]
+        context.user_data["last_signal_confidence"] = prediction["confidence"]
+
+        groups = list_groups()
+        if groups:
+            keyboard = [[InlineKeyboardButton(
+                f"📢 Send to {title}", callback_data=f"broadcast_{chat_id}"
+            )] for chat_id, title in groups[:8]]
+            keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", callback_data="broadcast_all")])
+            await update.message.reply_text(
+                "Want to share this signal to your groups?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
 
         await processing_msg.delete()
 
-        for f in (local_path,):
-            if os.path.exists(f):
-                os.remove(f)
+        if os.path.exists(local_path):
+            os.remove(local_path)
 
     except Exception as e:
         logger.exception("Error processing photo")
