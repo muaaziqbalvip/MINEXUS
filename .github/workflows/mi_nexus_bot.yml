@@ -1,0 +1,36 @@
+name: MI NEXUS Bot 24/7
+
+on:
+  schedule:
+    # Runs every 5 hours 50 minutes to restart before GitHub's 6h job limit
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}   # allows manual trigger from Actions tab
+
+concurrency:
+  group: mi-nexus-bot
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350   # ~5h50m safety margin under the 6h hard limit
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run MI NEXUS Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
+        run: |
+          python bot.py
