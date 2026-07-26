@@ -18,17 +18,24 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features
+## Features (v2 — Premium Upgrade)
 
 - 🔐 Password-gated access (`BOT_PASSWORD` secret, default `19620MINEXUS`)
 - 📸 Send any chart screenshot → instant analysis
-- 🕯️ Detects: Doji, Hammer, Shooting Star, Marubozu, Spinning Top,
-  Bullish/Bearish Engulfing, Piercing Line, Dark Cloud Cover, Tweezer Top/Bottom,
-  Morning Star, Evening Star, Three White Soldiers, Three Black Crows
-- ⬆️⬇️ Next-candle UP/DOWN prediction with confidence %
+- 🕯️ Detects **17 patterns**: Doji, Hammer, Inverted Hammer, Shooting Star,
+  Hanging Man, Marubozu, Spinning Top, Bullish/Bearish Engulfing, Piercing Line,
+  Dark Cloud Cover, Tweezer Top/Bottom, Harami Bullish/Bearish, Morning Star,
+  Evening Star, Three White Soldiers, Three Black Crows, Rising/Falling Three Methods
+- 💹 **Pair/Asset name auto-detection** via OCR (reads "EUR/USD OTC" etc. from screenshot)
+- ⬆️⬇️ Next-candle UP/DOWN prediction with confidence % + strength rating
+  (WEAK / MODERATE / STRONG / VERY STRONG)
+- 📋 Per-pattern reliability breakdown shown on the result card
 - ⏱️ Per-user timeframe setting (5 sec → 1 hour)
-- 🖼️ Beautiful 9:16 branded result card (MI NEXUS logo + glassmorphism style)
+- 🖼️ Premium 9:16 branded result card (MI NEXUS logo, glow effects, pair badge,
+  strength badge, confidence bar, pattern list)
+- 💎 Emoji-rich premium Telegram captions
 - 👥 Works in groups — auto-registers group, lists active groups
+- 📢 **One-tap broadcast** — send any signal to one or all connected groups
 - 📊 Per-user signal history/stats
 - 🚀 Runs 24/7 via GitHub Actions (auto-restart workflow + watchdog)
 
@@ -43,6 +50,7 @@ mi_nexus_bot/
 ├── utils/
 │   ├── candle_detector.py      # OpenCV candle detection
 │   ├── pattern_engine.py       # Pattern rules + prediction scoring
+│   ├── pair_detector.py        # OCR-based pair/asset name detection
 │   └── image_renderer.py       # 9:16 result card generator
 ├── assets/
 │   └── logo.png                # MI NEXUS logo
@@ -98,6 +106,10 @@ the bot if it stops (crash, GitHub 6-hour job limit, etc.) for near-zero downtim
 ## Local Testing (before deploying)
 
 ```bash
+# System dependency for pair/asset OCR detection
+sudo apt-get install -y tesseract-ocr   # Linux
+# brew install tesseract                # macOS
+
 pip install -r requirements.txt
 export BOT_TOKEN="your_token_here"
 export BOT_PASSWORD="19620MINEXUS"

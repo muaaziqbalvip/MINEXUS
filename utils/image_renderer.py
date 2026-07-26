@@ -115,38 +115,48 @@ def render_result_card(
 
     direction = prediction["direction"]
     confidence = prediction["confidence"]
+    strength = prediction.get("strength", "MODERATE")
     patterns = prediction["patterns"]
     is_up = direction == "UP"
     accent = NEON_GREEN if is_up else NEON_RED
 
-    # ---------------- Header ----------------
-    header_font = _font(FONT_BOLD, 64)
     sub_font = _font(FONT_REG, 30)
 
     # Logo (optional)
-    y_cursor = 40
+    y_cursor = 36
     if logo_path and os.path.exists(logo_path):
         logo = Image.open(logo_path).convert("RGBA")
-        logo_size = 110
+        logo_size = 100
         logo = logo.resize((logo_size, logo_size), Image.LANCZOS)
         canvas.alpha_composite(logo, ((CANVAS_W - logo_size) // 2, y_cursor))
-        y_cursor += logo_size + 10
+        y_cursor += logo_size + 8
 
-    header_font = _font(FONT_BOLD, 54)
+    header_font = _font(FONT_BOLD, 50)
     _glow_text(canvas, (CANVAS_W // 2, y_cursor), "MI NEXUS", header_font,
                fill=(255, 255, 255), glow_color=NEON_GREEN, glow_radius=6, anchor="ma")
-    y_cursor += 62
+    y_cursor += 58
     draw.text((CANVAS_W // 2, y_cursor), "ANALYZE  •  PREDICT  •  PROFIT",
               font=sub_font, fill=SOFT_GREEN, anchor="ma")
-    y_cursor += 50
+    y_cursor += 40
+
+    # Pair name badge
+    pair_font = _font(FONT_BOLD, 32)
+    pair_text = f"★ {pair_name} ★"
+    pair_w = draw.textlength(pair_text, font=pair_font)
+    badge_pad = 24
+    badge_box = (CANVAS_W // 2 - pair_w / 2 - badge_pad, y_cursor,
+                 CANVAS_W // 2 + pair_w / 2 + badge_pad, y_cursor + 54)
+    _rounded_rect(draw, badge_box, radius=27, fill=(20, 30, 28), outline=SOFT_GREEN, width=2)
+    draw.text((CANVAS_W // 2, y_cursor + 27), pair_text, font=pair_font, fill=(255, 255, 255), anchor="mm")
+    y_cursor += 74
 
     # ---------------- Chart Card ----------------
     card_top = y_cursor
-    card_bottom = card_top + 880
+    card_bottom = card_top + 840
     card_box = (40, card_top, CANVAS_W - 40, card_bottom)
     _rounded_rect(draw, card_box, radius=32, fill=CARD_BG, outline=CARD_BORDER, width=3)
 
-    chart_box = (70, card_top + 25, CANVAS_W - 70, card_bottom - 200)
+    chart_box = (70, card_top + 25, CANVAS_W - 70, card_bottom - 210)
     _paste_chart(canvas, chart_image_path, chart_box)
     draw = ImageDraw.Draw(canvas)  # refresh draw handle after paste
 
@@ -157,65 +167,79 @@ def render_result_card(
     draw.text(((marker_box[0] + marker_box[2]) // 2, (marker_box[1] + marker_box[3]) // 2),
                arrow_symbol, font=_font(FONT_BOLD, 34), fill=accent, anchor="mm")
 
+    # Strength badge (top-left of chart box)
+    strength_font = _font(FONT_BOLD, 24)
+    strength_text = f"● {strength}"
+    strength_w = draw.textlength(strength_text, font=strength_font)
+    sbadge_box = (chart_box[0] + 18, chart_box[1] + 18, chart_box[0] + 18 + strength_w + 30, chart_box[1] + 62)
+    _rounded_rect(draw, sbadge_box, radius=14, fill=(0, 0, 0, 190), outline=accent, width=2)
+    draw.text((sbadge_box[0] + 15, (sbadge_box[1] + sbadge_box[3]) // 2), strength_text,
+              font=strength_font, fill=accent, anchor="lm")
+
     # ---------------- Prediction Info Row (inside card) ----------------
-    info_y = chart_box[3] + 22
-    label_font = _font(FONT_BOLD, 42)
+    info_y = chart_box[3] + 20
+    label_font = _font(FONT_BOLD, 40)
     small_font = _font(FONT_REG, 26)
 
     _glow_text(canvas, (CANVAS_W // 2, info_y), f"NEXT CANDLE: {direction}",
                label_font, fill=(255, 255, 255), glow_color=accent, glow_radius=6, anchor="ma")
     draw = ImageDraw.Draw(canvas)
-    info_y += 62
+    info_y += 58
 
     # Confidence bar
     bar_w = CANVAS_W - 200
     bar_x0 = 100
     bar_y0 = info_y
-    bar_h = 28
-    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h), radius=14,
+    bar_h = 26
+    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h), radius=13,
                   fill=(30, 40, 38))
     fill_w = int(bar_w * (confidence / 100))
-    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + fill_w, bar_y0 + bar_h), radius=14, fill=accent)
-    draw.text((CANVAS_W // 2, bar_y0 + bar_h + 22), f"CONFIDENCE: {confidence}%",
+    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + fill_w, bar_y0 + bar_h), radius=13, fill=accent)
+    draw.text((CANVAS_W // 2, bar_y0 + bar_h + 20), f"CONFIDENCE: {confidence}%",
               font=small_font, fill=SILVER, anchor="ma")
 
     # ---------------- Details Card ----------------
-    details_top = card_bottom + 26
-    details_bottom = details_top + 300
+    details_top = card_bottom + 24
+    details_bottom = details_top + 400
     details_box = (40, details_top, CANVAS_W - 40, details_bottom)
     _rounded_rect(draw, details_box, radius=28, fill=CARD_BG, outline=(50, 70, 65), width=2)
 
     dx = 70
-    dy = details_top + 22
-    row_font = _font(FONT_REG, 30)
-    row_font_b = _font(FONT_BOLD, 30)
-
-    pair_label = pair_name if pair_name else "Chart Analysis"
-    draw.text((dx, dy), "Pair / Asset:", font=row_font, fill=SILVER)
-    draw.text((CANVAS_W - 70, dy), pair_label, font=row_font_b, fill=(255, 255, 255), anchor="ra")
-    dy += 52
+    dy = details_top + 20
+    row_font = _font(FONT_REG, 28)
+    row_font_b = _font(FONT_BOLD, 28)
 
     draw.text((dx, dy), "Timeframe:", font=row_font, fill=SILVER)
     draw.text((CANVAS_W - 70, dy), timeframe_label, font=row_font_b, fill=(255, 255, 255), anchor="ra")
-    dy += 52
+    dy += 46
 
     tz = timezone(timedelta(hours=utc_offset_hours))
     now_str = datetime.now(tz).strftime("%H:%M:%S")
     draw.text((dx, dy), f"Time (UTC{'+' if utc_offset_hours >= 0 else ''}{utc_offset_hours}):",
               font=row_font, fill=SILVER)
     draw.text((CANVAS_W - 70, dy), now_str, font=row_font_b, fill=(255, 255, 255), anchor="ra")
-    dy += 52
+    dy += 46
 
-    top_patterns = sorted(patterns, key=lambda p: p["weight"], reverse=True)[:2]
-    pattern_str = ", ".join(p["name"] for p in top_patterns) if top_patterns else "N/A"
-    draw.text((dx, dy), "Pattern(s):", font=row_font, fill=SILVER)
-    draw.text((CANVAS_W - 70, dy), pattern_str, font=_font(FONT_BOLD, 24),
-              fill=accent, anchor="ra")
-    dy += 52
+    draw.text((dx, dy), "Trend Bias:", font=row_font, fill=SILVER)
+    bias_val = prediction.get("trend_bias", 0)
+    bias_label = "Bullish" if bias_val > 0.05 else ("Bearish" if bias_val < -0.05 else "Flat")
+    draw.text((CANVAS_W - 70, dy), bias_label, font=row_font_b, fill=(255, 255, 255), anchor="ra")
+    dy += 46
 
-    draw.text((dx, dy), "Engine:", font=row_font, fill=SILVER)
-    draw.text((CANVAS_W - 70, dy), "MI NEXUS Local Vision", font=row_font_b,
-              fill=(255, 255, 255), anchor="ra")
+    draw.text((dx, dy), "Patterns Detected:", font=row_font, fill=SILVER)
+    dy += 42
+
+    breakdown = prediction.get("breakdown", [])
+    top_patterns = sorted(breakdown, key=lambda p: p["reliability"], reverse=True)[:3]
+    pat_font = _font(FONT_REG, 24)
+    for p in top_patterns:
+        sig_symbol = "▲" if p["signal"] == "bullish" else ("▼" if p["signal"] == "bearish" else "●")
+        sig_color = NEON_GREEN if p["signal"] == "bullish" else (NEON_RED if p["signal"] == "bearish" else SILVER)
+        line = f"{sig_symbol} {p['name']}"
+        draw.text((dx + 10, dy), line, font=pat_font, fill=sig_color)
+        draw.text((CANVAS_W - 70, dy), f"{int(p['reliability'])}% reliability",
+                   font=_font(FONT_REG, 22), fill=SILVER, anchor="ra")
+        dy += 38
 
     # ---------------- Footer ----------------
     footer_font = _font(FONT_REG, 26)

@@ -23,6 +23,7 @@ from telegram.ext import (
 from utils.candle_detector import detect_candles
 from utils.pattern_engine import predict_next_candle
 from utils.image_renderer import render_result_card
+from utils.pair_detector import detect_pair_name
 
 # ----------------------------------------------------------------------
 # CONFIG
@@ -339,6 +340,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
+    elif data.startswith("broadcast_"):
+        target = data.replace("broadcast_", "")
+        signal_path = context.user_data.get("last_signal_path")
+        signal_caption = context.user_data.get("last_signal_caption")
+
+        if not signal_path or not os.path.exists(signal_path):
+            await query.edit_message_text("⚠️ Signal expired. Please analyze a new chart.")
+            return
+
+        groups = list_groups()
+        targets = groups if target == "all" else [g for g in groups if str(g[0]) == target]
+
+        sent_count = 0
+        for chat_id, title in targets:
+            try:
+                with open(signal_path, "rb") as img:
+                    await context.bot.send_photo(
+                        chat_id=chat_id, photo=img,
+                        caption=signal_caption, parse_mode="Markdown"
+                    )
+                sent_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to broadcast to {chat_id}: {e}")
+
+        await query.edit_message_text(f"✅ Signal sent to {sent_count} group(s)!")
+
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -350,7 +377,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔐 Please enter the access password first. Use /start")
         return
 
-    processing_msg = await update.message.reply_text("⚡ *Analyzing chart...*", parse_mode="Markdown")
+    processing_msg = await update.message.reply_text(
+        "⚡ *MI NEXUS is scanning the chart...*\n_Detecting candles, patterns & momentum_",
+        parse_mode="Markdown"
+    )
 
     try:
         photo_file = await update.message.photo[-1].get_file()
@@ -374,11 +404,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tf_code = get_timeframe(user.id) if not is_group else "1m"
         tf_label = TF_LABELS.get(tf_code, "1 Min")
 
+        pair_name = detect_pair_name(local_path) or "Asset / Pair"
+
         output_path = f"/tmp/mi_nexus_result_{user.id}_{update.message.message_id}.png"
         render_result_card(
             chart_image_path=local_path,
             prediction=prediction,
-            pair_name="Chart Analysis",
+            pair_name=pair_name,
             timeframe_label=tf_label,
             utc_offset_hours=5,
             logo_path=LOGO_PATH if os.path.exists(LOGO_PATH) else None,
@@ -388,21 +420,46 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_group:
             log_signal(user.id, prediction["direction"], prediction["confidence"], tf_code)
 
+        is_up = prediction["direction"] == "UP"
+        dir_emoji = "🟢⬆️" if is_up else "🔴⬇️"
+        strength = prediction.get("strength", "MODERATE")
+        strength_emoji = {"VERY STRONG": "🔥🔥🔥", "STRONG": "🔥🔥", "MODERATE": "🔥", "WEAK": "⚡"}.get(strength, "⚡")
+
+        top_pattern = "N/A"
+        if prediction.get("breakdown"):
+            top_pattern = sorted(prediction["breakdown"], key=lambda p: p["reliability"], reverse=True)[0]["name"]
+
+        caption = (
+            f"💎 *MI NEXUS PREMIUM SIGNAL* 💎\n\n"
+            f"{dir_emoji} Direction: *{prediction['direction']}*\n"
+            f"📊 Confidence: *{prediction['confidence']}%* {strength_emoji}\n"
+            f"⏱ Timeframe: *{tf_label}*\n"
+            f"🕯️ Key Pattern: *{top_pattern}*\n"
+            f"💹 Pair: *{pair_name}*\n\n"
+            f"✅ _Trade smart, manage your risk._"
+        )
+
         with open(output_path, "rb") as img:
-            await update.message.reply_photo(
-                photo=img,
-                caption=(
-                    f"🎯 *MI NEXUS Signal*\n"
-                    f"Direction: *{prediction['direction']}*\n"
-                    f"Confidence: *{prediction['confidence']}%*\n"
-                    f"Timeframe: *{tf_label}*"
-                ),
-                parse_mode="Markdown"
-            )
+            sent_msg = await update.message.reply_photo(photo=img, caption=caption, parse_mode="Markdown")
+
+        # Offer broadcast to groups (only for private chat, unlocked users)
+        if not is_group:
+            groups = list_groups()
+            if groups:
+                context.user_data["last_signal_path"] = output_path
+                context.user_data["last_signal_caption"] = caption
+                keyboard = [[InlineKeyboardButton(
+                    f"📢 Send to {title}", callback_data=f"broadcast_{chat_id}"
+                )] for chat_id, title in groups[:8]]
+                keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", callback_data="broadcast_all")])
+                await update.message.reply_text(
+                    "Want to share this signal to your groups?",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+
         await processing_msg.delete()
 
-        # Cleanup temp files
-        for f in (local_path, output_path):
+        for f in (local_path,):
             if os.path.exists(f):
                 os.remove(f)
 
