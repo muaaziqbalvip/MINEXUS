@@ -24,7 +24,9 @@ from utils.candle_detector import detect_candles
 from utils.pattern_engine import predict_next_candle
 from utils.image_renderer import render_result_card
 from utils.pair_detector import detect_pair_name
-from utils.sticker_generator import generate_direction_sticker
+from utils.sticker_generator import (
+    generate_direction_sticker, generate_session_start_sticker, generate_result_sticker
+)
 
 # ----------------------------------------------------------------------
 # CONFIG
@@ -59,7 +61,9 @@ def init_db():
             unlocked INTEGER DEFAULT 0,
             timeframe TEXT DEFAULT '1m',
             username TEXT,
-            joined_at TEXT
+            joined_at TEXT,
+            auto_broadcast INTEGER DEFAULT 0,
+            selected_group INTEGER DEFAULT NULL
         )
     """)
     cur.execute("""
@@ -76,10 +80,26 @@ def init_db():
             direction TEXT,
             confidence REAL,
             timeframe TEXT,
+            result TEXT DEFAULT NULL,
             created_at TEXT
         )
     """)
     conn.commit()
+
+    # Lightweight migration for existing DBs created by earlier bot versions
+    for col, coltype in (("auto_broadcast", "INTEGER DEFAULT 0"),
+                         ("selected_group", "INTEGER DEFAULT NULL")):
+        try:
+            cur.execute(f"ALTER TABLE users ADD COLUMN {col} {coltype}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+    try:
+        cur.execute("ALTER TABLE signal_log ADD COLUMN result TEXT DEFAULT NULL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
     conn.close()
 
 
@@ -157,7 +177,65 @@ def log_signal(user_id, direction, confidence, timeframe):
         (user_id, direction, confidence, timeframe, datetime.utcnow().isoformat())
     )
     conn.commit()
+    signal_id = cur.lastrowid
     conn.close()
+    return signal_id
+
+
+def set_signal_result(signal_id, result):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("UPDATE signal_log SET result=? WHERE id=?", (result, signal_id))
+    conn.commit()
+    conn.close()
+
+
+def get_win_loss_stats(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT COUNT(*) FROM signal_log WHERE user_id=? AND result='WIN'", (user_id,)
+    )
+    wins = cur.fetchone()[0]
+    cur.execute(
+        "SELECT COUNT(*) FROM signal_log WHERE user_id=? AND result='LOSS'", (user_id,)
+    )
+    losses = cur.fetchone()[0]
+    conn.close()
+    return wins, losses
+
+
+def set_auto_broadcast(user_id, enabled, group_id=None):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    if group_id is not None:
+        cur.execute("UPDATE users SET auto_broadcast=?, selected_group=? WHERE user_id=?",
+                    (1 if enabled else 0, group_id, user_id))
+    else:
+        cur.execute("UPDATE users SET auto_broadcast=? WHERE user_id=?",
+                    (1 if enabled else 0, user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_auto_broadcast_settings(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT auto_broadcast, selected_group FROM users WHERE user_id=?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return False, None
+    return bool(row[0]), row[1]
+
+
+def get_group_title(chat_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT title FROM groups WHERE chat_id=?", (chat_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else "Unknown Group"
 
 
 TF_LABELS = {code: label for label, code in TIMEFRAME_OPTIONS}
@@ -198,9 +276,13 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     tf = get_timeframe(user_id)
     tf_label = TF_LABELS.get(tf, "1 Min")
+    auto_bc, selected_group = get_auto_broadcast_settings(user_id)
+    bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
 
     keyboard = [
         [InlineKeyboardButton("⏱ Change Timeframe", callback_data="menu_timeframe")],
+        [InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings")],
+        [InlineKeyboardButton("🎬 Post Session Start", callback_data="menu_session_start")],
         [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
         [InlineKeyboardButton("👥 Active Groups", callback_data="menu_groups")],
         [InlineKeyboardButton("ℹ️ How It Works", callback_data="menu_help")],
@@ -209,9 +291,10 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         "✅ *MI NEXUS UNLOCKED*\n\n"
-        f"⏱ Current Timeframe: *{tf_label}*\n\n"
+        f"⏱ Timeframe: *{tf_label}*\n"
+        f"📢 Auto-Broadcast: *{bc_status}*\n\n"
         "📸 Send me any trading chart screenshot and I'll analyze it:\n"
-        "• Candlestick pattern detection\n"
+        "• Candlestick pattern detection (55+ patterns)\n"
         "• Trend momentum scoring\n"
         "• Next candle prediction (UP/DOWN)\n"
         "• Confidence percentage\n\n"
@@ -231,6 +314,44 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
     text = update.message.text.strip()
+
+    # ---- Awaiting pair name for a manual "Session Start" post ----
+    if context.user_data.get("awaiting_session_pair"):
+        context.user_data["awaiting_session_pair"] = False
+        group_id = context.user_data.get("session_target_group")
+
+        if not group_id:
+            await update.message.reply_text("⚠️ Session target lost. Please try again from the menu.")
+            return
+
+        pair_name = text
+        tf = get_timeframe(user.id)
+        tf_label = TF_LABELS.get(tf, "1 Min")
+        group_name = get_group_title(group_id)
+
+        sticker_path = generate_session_start_sticker(
+            pair_name=pair_name, timeframe=tf_label,
+            output_path=f"/tmp/mi_nexus_session_sticker_{user.id}.webp"
+        )
+
+        session_caption = (
+            f"🎬 *MI NEXUS — TRADING SESSION STARTED* 🎬\n\n"
+            f"💹 Pair: *{pair_name}*\n"
+            f"⏱ Timeframe: *{tf_label}*\n\n"
+            f"📢 _Everyone open this pair — signals incoming!_ 🔥"
+        )
+
+        try:
+            with open(sticker_path, "rb") as sticker:
+                await context.bot.send_sticker(chat_id=group_id, sticker=sticker)
+            await context.bot.send_message(chat_id=group_id, text=session_caption, parse_mode="Markdown")
+            await update.message.reply_text(
+                f"✅ Session-start post sent to *{group_name}*!", parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(f"Session start post failed: {e}")
+            await update.message.reply_text("⚠️ Failed to post — the bot may have been removed from that group.")
+        return
 
     if is_unlocked(user.id):
         await update.message.reply_text(
@@ -333,8 +454,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "menu_back":
+        auto_bc, _ = get_auto_broadcast_settings(user_id)
+        bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
         keyboard = [
             [InlineKeyboardButton("⏱ Change Timeframe", callback_data="menu_timeframe")],
+            [InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings")],
+            [InlineKeyboardButton("🎬 Post Session Start", callback_data="menu_session_start")],
             [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
             [InlineKeyboardButton("👥 Active Groups", callback_data="menu_groups")],
             [InlineKeyboardButton("ℹ️ How It Works", callback_data="menu_help")],
@@ -342,6 +467,94 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "✅ *MI NEXUS Main Menu*", parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # ---------------- Auto-Broadcast Settings ----------------
+    elif data == "menu_broadcast_settings":
+        auto_bc, selected_group = get_auto_broadcast_settings(user_id)
+        groups = list_groups()
+
+        if not groups:
+            await query.edit_message_text(
+                "⚠️ *No groups connected yet.*\n\n"
+                "Add this bot to a group first (send /start there), "
+                "then come back to enable auto-broadcast.",
+                parse_mode="Markdown"
+            )
+            return
+
+        status = "🟢 ON" if auto_bc else "🔴 OFF"
+        group_name = get_group_title(selected_group) if selected_group else "None selected"
+
+        keyboard = []
+        if auto_bc:
+            keyboard.append([InlineKeyboardButton("🔴 Turn OFF Auto-Broadcast", callback_data="autobc_off")])
+        else:
+            keyboard.append([InlineKeyboardButton("🟢 Turn ON Auto-Broadcast", callback_data="autobc_pick_group")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_back")])
+
+        await query.edit_message_text(
+            f"📢 *Auto-Broadcast Settings*\n\n"
+            f"Status: *{status}*\n"
+            f"Target Group: *{group_name}*\n\n"
+            f"_When ON, every signal you analyze is automatically sent "
+            f"to your selected group — no manual tap needed._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data == "autobc_pick_group":
+        groups = list_groups()
+        keyboard = [[InlineKeyboardButton(title, callback_data=f"autobc_set_{chat_id}")]
+                    for chat_id, title in groups[:10]]
+        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_broadcast_settings")])
+        await query.edit_message_text(
+            "👥 *Select the group for auto-broadcast:*",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("autobc_set_"):
+        group_id = int(data.replace("autobc_set_", ""))
+        set_auto_broadcast(user_id, True, group_id)
+        group_name = get_group_title(group_id)
+        await query.edit_message_text(
+            f"✅ *Auto-Broadcast ENABLED*\n\nTarget: *{group_name}*\n\n"
+            f"Every signal you analyze will now be sent there automatically.",
+            parse_mode="Markdown"
+        )
+
+    elif data == "autobc_off":
+        set_auto_broadcast(user_id, False)
+        await query.edit_message_text("🔴 Auto-Broadcast turned OFF.", parse_mode="Markdown")
+
+    # ---------------- Manual Session Start Post ----------------
+    elif data == "menu_session_start":
+        groups = list_groups()
+        if not groups:
+            await query.edit_message_text(
+                "⚠️ *No groups connected yet.* Add this bot to a group first.",
+                parse_mode="Markdown"
+            )
+            return
+        keyboard = [[InlineKeyboardButton(title, callback_data=f"sessionpick_{chat_id}")]
+                    for chat_id, title in groups[:10]]
+        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_back")])
+        await query.edit_message_text(
+            "🎬 *Post Session Start*\n\nSelect which group to post to:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("sessionpick_"):
+        group_id = int(data.replace("sessionpick_", ""))
+        context.user_data["session_target_group"] = group_id
+        context.user_data["awaiting_session_pair"] = True
+        await query.edit_message_text(
+            "✏️ *Type the pair/asset name for this session*\n\n"
+            "Example: `EUR/USD OTC` or `Gold` or `BTC/USD`\n\n"
+            "This will be posted as a VIP session-start alert.",
+            parse_mode="Markdown"
         )
 
     elif data.startswith("broadcast_"):
@@ -358,7 +571,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         groups = list_groups()
         targets = groups if target == "all" else [g for g in groups if str(g[0]) == target]
 
-        # Generate the matching UP/DOWN sticker once for this broadcast
         sticker_path = None
         if signal_direction:
             sticker_path = generate_direction_sticker(
@@ -382,6 +594,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"Failed to broadcast to {chat_id}: {e}")
 
         await query.edit_message_text(f"✅ Signal + sticker sent to {sent_count} group(s)!")
+
+    # ---------------- Win / Loss Result ----------------
+    elif data.startswith("result_"):
+        _, result, signal_id = data.split("_", 2)
+        signal_id = int(signal_id)
+        set_signal_result(signal_id, result.upper())
+
+        is_win = result.upper() == "WIN"
+        result_sticker_path = generate_result_sticker(
+            is_win, output_path=f"/tmp/mi_nexus_result_sticker_{user_id}_{signal_id}.webp"
+        )
+
+        auto_bc, selected_group = get_auto_broadcast_settings(user_id)
+        target_groups = []
+        if selected_group:
+            target_groups = [(selected_group, get_group_title(selected_group))]
+        else:
+            target_groups = list_groups()[:1]  # fallback: first known group
+
+        emoji = "🎉✅" if is_win else "❌💪"
+        result_caption = (
+            f"{emoji} *TRADE RESULT: {result.upper()}* {emoji}\n\n"
+            f"MI NEXUS Signal Outcome\n"
+            f"_{'Great call! Onwards to the next one.' if is_win else 'Not every trade wins — stay disciplined.'}_"
+        )
+
+        sent = 0
+        for chat_id, title in target_groups:
+            try:
+                with open(result_sticker_path, "rb") as sticker:
+                    await context.bot.send_sticker(chat_id=chat_id, sticker=sticker)
+                await context.bot.send_message(chat_id=chat_id, text=result_caption, parse_mode="Markdown")
+                sent += 1
+            except Exception as e:
+                logger.warning(f"Failed to post result to {chat_id}: {e}")
+
+        wins, losses = get_win_loss_stats(user_id)
+        await query.edit_message_text(
+            f"{'✅' if is_win else '❌'} Result logged: *{result.upper()}*\n"
+            f"Posted to {sent} group(s).\n\n"
+            f"📊 Your Record: *{wins}W / {losses}L*",
+            parse_mode="Markdown"
+        )
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -437,7 +692,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             output_path=output_path,
         )
 
-        log_signal(user.id, prediction["direction"], prediction["confidence"], tf_code)
+        log_id = log_signal(user.id, prediction["direction"], prediction["confidence"], tf_code)
 
         is_up = prediction["direction"] == "UP"
         dir_emoji = "🟢⬆️" if is_up else "🔴⬇️"
@@ -474,17 +729,48 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["last_signal_caption"] = caption
         context.user_data["last_signal_direction"] = prediction["direction"]
         context.user_data["last_signal_confidence"] = prediction["confidence"]
+        context.user_data["last_signal_id"] = log_id
 
-        groups = list_groups()
-        if groups:
-            keyboard = [[InlineKeyboardButton(
-                f"📢 Send to {title}", callback_data=f"broadcast_{chat_id}"
-            )] for chat_id, title in groups[:8]]
-            keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", callback_data="broadcast_all")])
-            await update.message.reply_text(
-                "Want to share this signal to your groups?",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+        # ---- Auto-broadcast: if enabled, send straight to the selected group ----
+        auto_bc, selected_group = get_auto_broadcast_settings(user.id)
+        if auto_bc and selected_group:
+            try:
+                with open(output_path, "rb") as img:
+                    await context.bot.send_photo(
+                        chat_id=selected_group, photo=img,
+                        caption=caption, parse_mode="Markdown"
+                    )
+                with open(sticker_path, "rb") as sticker:
+                    await context.bot.send_sticker(chat_id=selected_group, sticker=sticker)
+                await update.message.reply_text(
+                    f"📢 Auto-broadcast: sent to *{get_group_title(selected_group)}*",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.warning(f"Auto-broadcast failed: {e}")
+                await update.message.reply_text("⚠️ Auto-broadcast failed — group may have removed the bot.")
+        else:
+            groups = list_groups()
+            if groups:
+                keyboard = [[InlineKeyboardButton(
+                    f"📢 Send to {title}", callback_data=f"broadcast_{chat_id}"
+                )] for chat_id, title in groups[:8]]
+                keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", callback_data="broadcast_all")])
+                await update.message.reply_text(
+                    "Want to share this signal to your groups?",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+
+        # ---- WIN / LOSS result buttons ----
+        result_keyboard = [[
+            InlineKeyboardButton("✅ WIN", callback_data=f"result_WIN_{log_id}"),
+            InlineKeyboardButton("❌ LOSS", callback_data=f"result_LOSS_{log_id}"),
+        ]]
+        await update.message.reply_text(
+            "📋 *After your trade closes, tap the result:*",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(result_keyboard)
+        )
 
         await processing_msg.delete()
 
