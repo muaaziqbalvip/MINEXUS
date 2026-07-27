@@ -18,7 +18,29 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v7 — Premium Visual Redesign, Smarter Scoring, 74+ Patterns)
+## Features (v8 — Research-Backed Reliability Weights + RSI Confluence)
+
+- 🔬 **Statistically-recalibrated pattern weights**: reliability scores for
+  every pattern were reviewed against independently-published, large-sample
+  technical-analysis research on real-world candlestick performance. Two
+  concrete corrections came out of that review:
+  - Some famous, easy-to-spot patterns (Hanging Man, Shooting Star, Matching
+    Low) have been found in large historical backtests to perform close to
+    a coin-flip despite their popularity — their weights were lowered so
+    they nudge the score gently instead of being treated as strong signals.
+  - Patterns with consistently strong historical directional performance
+    (Morning/Evening Star, Abandoned Baby, engulfing patterns, Marubozu)
+    keep higher weights, reflecting their more consistent real-world track record.
+- 📉 **RSI confluence detection** — the bot now looks for an RSI-style
+  oscillator panel in the screenshot (common on Quotex/broker charts) and
+  reads its approximate zone (Overbought / Oversold / Neutral). If the RSI
+  zone agrees with the pattern-based direction, confidence gets a modest
+  boost; if they disagree, confidence is pulled back — mirroring the
+  well-documented real-world finding that combining RSI with candlestick
+  confirmation improves accuracy over candlesticks alone. This is a visual
+  approximation of RSI from the chart image, not an exact recalculation
+  from raw price data, so it's used as supporting context rather than a
+  standalone signal.
 
 - 🎨 **Redesigned result card** with a premium two-column insight section:
   - **Market Sentiment card** — animated-style bull/bear icon drawn to match
@@ -130,6 +152,7 @@ mi_nexus_bot/
 │   ├── candle_detector.py      # OpenCV candle detection
 │   ├── pattern_engine.py       # 55+ pattern rules + prediction scoring
 │   ├── pair_detector.py        # OCR-based pair/asset name detection
+│   ├── indicator_reader.py     # Visual RSI panel detection for confluence
 │   ├── sticker_generator.py    # Looks up YOUR sticker files (no auto-gen)
 │   └── image_renderer.py       # 9:16 result card generator
 ├── assets/

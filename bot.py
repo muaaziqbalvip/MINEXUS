@@ -24,6 +24,7 @@ from utils.candle_detector import detect_candles
 from utils.pattern_engine import predict_next_candle
 from utils.image_renderer import render_result_card
 from utils.pair_detector import detect_pair_name
+from utils.indicator_reader import detect_rsi_signal
 from utils.sticker_generator import (
     get_direction_sticker, get_session_start_sticker, get_result_sticker
 )
@@ -676,7 +677,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        prediction = predict_next_candle(candles)
+        rsi_signal = detect_rsi_signal(local_path)
+        prediction = predict_next_candle(candles, rsi_signal=rsi_signal)
         tf_code = get_timeframe(user.id)
         tf_label = TF_LABELS.get(tf_code, "1 Min")
 
@@ -713,6 +715,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             condition_text = "🔴 Choppy"
 
+        rsi_line = ""
+        rsi_data = prediction.get("rsi_signal")
+        if rsi_data:
+            rsi_agrees = prediction.get("rsi_agrees")
+            agree_symbol = " ✅" if rsi_agrees else (" ⚠️" if rsi_agrees is False else "")
+            rsi_line = f"📉 RSI Zone: *{rsi_data['zone']}*{agree_symbol}\n"
+
         caption = (
             f"💎 *MI NEXUS PREMIUM SIGNAL* 💎\n\n"
             f"{dir_emoji} Direction: *{prediction['direction']}*\n"
@@ -720,6 +729,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏱ Timeframe: *{tf_label}*\n"
             f"🕯️ Key Pattern: *{top_pattern}* ({pattern_count} total detected)\n"
             f"📈 Market Condition: *{condition_text}*\n"
+            f"{rsi_line}"
             f"💹 Pair: *{pair_name}*\n\n"
             f"✅ _Trade smart, manage your risk._"
         )
