@@ -18,7 +18,22 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v5 — 74+ Patterns, Your Own Stickers Only, Auto-Broadcast, Win/Loss Tracking)
+## Features (v6 — Smarter Scoring Engine, 74+ Patterns, Your Own Stickers, Auto-Broadcast)
+
+- 🧠 **Smarter signal-quality scoring** (new in v6):
+  - **Confluence bonus** — when multiple detected patterns agree on
+    direction, confidence gets boosted; when they conflict, it's dampened
+    back toward neutral instead of overstating certainty
+  - **Choppiness detection** — counts recent direction flips to detect
+    sideways/indecisive markets and automatically lowers confidence there,
+    since patterns are less reliable outside a clean trend
+  - **Support/Resistance proximity nudge** — a soft contextual adjustment
+    based on whether price is near a recent swing high or swing low
+  - **Market Condition indicator** — every signal card now shows
+    "Clean Trend / Mixed / Choppy" so you know how much to trust it
+  - **More robust body/wick detection** — candles with no visible wick
+    (true Marubozu) are now distinguished from ones where wick detection
+    simply failed, reducing false Marubozu calls
 
 - 🔐 Password-gated access (`BOT_PASSWORD` secret, default `19620MINEXUS`)
 - 📸 Send any chart screenshot → instant analysis

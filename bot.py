@@ -704,12 +704,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if prediction.get("breakdown"):
             top_pattern = sorted(prediction["breakdown"], key=lambda p: p["reliability"], reverse=True)[0]["name"]
 
+        pattern_count = len(prediction.get("breakdown", []))
+        choppiness = prediction.get("choppiness", 0)
+        if choppiness < 0.3:
+            condition_text = "🟢 Clean Trend"
+        elif choppiness < 0.6:
+            condition_text = "🟡 Mixed"
+        else:
+            condition_text = "🔴 Choppy"
+
         caption = (
             f"💎 *MI NEXUS PREMIUM SIGNAL* 💎\n\n"
             f"{dir_emoji} Direction: *{prediction['direction']}*\n"
             f"📊 Confidence: *{prediction['confidence']}%* {strength_emoji}\n"
             f"⏱ Timeframe: *{tf_label}*\n"
-            f"🕯️ Key Pattern: *{top_pattern}*\n"
+            f"🕯️ Key Pattern: *{top_pattern}* ({pattern_count} total detected)\n"
+            f"📈 Market Condition: *{condition_text}*\n"
             f"💹 Pair: *{pair_name}*\n\n"
             f"✅ _Trade smart, manage your risk._"
         )

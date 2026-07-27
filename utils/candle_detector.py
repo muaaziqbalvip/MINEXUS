@@ -248,18 +248,28 @@ def _build_candle_from_group(group):
     if not group:
         return None
 
-    # widest rect = body, narrower = wick
-    group_sorted = sorted(group, key=lambda c: c["w"], reverse=True)
-    body_rect = group_sorted[0]
+    # Separate body (wider rects) from wick (narrower rects) using a
+    # relative-width threshold rather than always trusting "widest = body",
+    # which is more robust when a candle has no visible wick at all.
+    widths = [c["w"] for c in group]
+    max_w = max(widths)
+    body_candidates = [c for c in group if c["w"] >= max_w * 0.6]
+    wick_candidates = [c for c in group if c["w"] < max_w * 0.6]
+
+    # Body = the union of all "wide" rects (usually just one)
+    body_top = min(c["y"] for c in body_candidates)
+    body_bottom = max(c["y"] + c["h"] for c in body_candidates)
+    body_rect = max(body_candidates, key=lambda c: c["w"])
     color = body_rect["color"]
 
-    all_tops = [c["y"] for c in group]
-    all_bottoms = [c["y"] + c["h"] for c in group]
-
-    wick_top = min(all_tops)
-    wick_bottom = max(all_bottoms)
-    body_top = body_rect["y"]
-    body_bottom = body_rect["y"] + body_rect["h"]
+    # Wick = extends from body edges to the furthest thin-rect extent;
+    # if no thin wick rects were found, wick == body (true Marubozu / no wick)
+    if wick_candidates:
+        wick_top = min(body_top, min(c["y"] for c in wick_candidates))
+        wick_bottom = max(body_bottom, max(c["y"] + c["h"] for c in wick_candidates))
+    else:
+        wick_top = body_top
+        wick_bottom = body_bottom
 
     center_x = body_rect["x"] + body_rect["w"] / 2
 

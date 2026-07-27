@@ -24,6 +24,7 @@ BG_BOTTOM = (2, 4, 4)
 NEON_GREEN = (57, 255, 20)
 SOFT_GREEN = (120, 220, 140)
 NEON_RED = (255, 60, 60)
+GOLD = (255, 208, 80)
 SILVER = (210, 215, 220)
 CARD_BG = (14, 22, 20)
 CARD_BORDER = (60, 255, 140)
@@ -200,7 +201,7 @@ def render_result_card(
 
     # ---------------- Details Card ----------------
     details_top = card_bottom + 24
-    details_bottom = details_top + 440
+    details_bottom = details_top + 480
     details_box = (40, details_top, CANVAS_W - 40, details_bottom)
     _rounded_rect(draw, details_box, radius=28, fill=CARD_BG, outline=(50, 70, 65), width=2)
 
@@ -224,6 +225,17 @@ def render_result_card(
     bias_val = prediction.get("trend_bias", 0)
     bias_label = "Bullish" if bias_val > 0.05 else ("Bearish" if bias_val < -0.05 else "Flat")
     draw.text((CANVAS_W - 70, dy), bias_label, font=row_font_b, fill=(255, 255, 255), anchor="ra")
+    dy += 46
+
+    draw.text((dx, dy), "Market Condition:", font=row_font, fill=SILVER)
+    choppiness = prediction.get("choppiness", 0)
+    if choppiness < 0.3:
+        condition_label, condition_color = "Clean Trend", NEON_GREEN
+    elif choppiness < 0.6:
+        condition_label, condition_color = "Mixed", GOLD
+    else:
+        condition_label, condition_color = "Choppy", NEON_RED
+    draw.text((CANVAS_W - 70, dy), condition_label, font=row_font_b, fill=condition_color, anchor="ra")
     dy += 46
 
     draw.text((dx, dy), "Patterns Detected:", font=row_font, fill=SILVER)

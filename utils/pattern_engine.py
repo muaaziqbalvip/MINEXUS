@@ -476,32 +476,117 @@ def compute_trend_bias(candles, lookback=8):
     return max(-1.0, min(1.0, combined))
 
 
+def compute_market_choppiness(candles, lookback=8):
+    """
+    Measures how indecisive/choppy recent price action has been by counting
+    direction flips (green->red->green...) in the last N candles. Choppy
+    markets should lower our confidence since patterns are less reliable
+    in a sideways/indecisive tape.
+    Returns 0.0 (clean trending) to 1.0 (very choppy/indecisive).
+    """
+    recent = _last(candles, lookback)
+    if len(recent) < 3:
+        return 0.0
+
+    flips = 0
+    for i in range(1, len(recent)):
+        prev_up = recent[i - 1].is_bullish()
+        curr_up = recent[i].is_bullish()
+        if prev_up != curr_up:
+            flips += 1
+
+    max_possible_flips = len(recent) - 1
+    return flips / max_possible_flips if max_possible_flips else 0.0
+
+
+def compute_support_resistance_context(candles, lookback=12):
+    """
+    Checks whether the most recent candle is trading near the recent
+    swing high (resistance) or swing low (support). Being near resistance
+    slightly favors a pullback (bearish), near support slightly favors a
+    bounce (bullish) — this is a soft contextual nudge, not a hard signal.
+    Returns a small bias value between -0.15 and +0.15.
+    """
+    recent = _last(candles, lookback)
+    if len(recent) < 4:
+        return 0.0
+
+    swing_high = min(c.wick_top for c in recent)     # smaller y = higher price
+    swing_low = max(c.wick_bottom for c in recent)    # larger y = lower price
+    price_range = swing_low - swing_high
+    if price_range <= 0:
+        return 0.0
+
+    last = recent[-1]
+    last_mid = (last.body_top + last.body_bottom) / 2
+    # position: 0.0 = at swing high (resistance), 1.0 = at swing low (support)
+    position = (last_mid - swing_high) / price_range
+    position = max(0.0, min(1.0, position))
+
+    if position < 0.15:
+        return -0.15   # near resistance -> slight bearish nudge
+    elif position > 0.85:
+        return 0.15     # near support -> slight bullish nudge
+    return 0.0
+
+
 def predict_next_candle(candles):
     """
-    Combines pattern signals + trend momentum into a final prediction.
+    Combines pattern signals + trend momentum + market context into a
+    final prediction. Improvements over the basic version:
+      - Patterns detected on the most recent candle carry more weight than
+        ones anchored further back (recency weighting).
+      - When multiple patterns agree on direction, confidence gets a small
+        boost (confluence bonus); when they conflict, it's dampened.
+      - Choppy/indecisive recent price action lowers confidence, since
+        pattern reliability drops in sideways markets.
+      - A soft support/resistance proximity nudge is factored in.
     """
     patterns = detect_patterns(candles)
     trend_bias = compute_trend_bias(candles)
+    choppiness = compute_market_choppiness(candles)
+    sr_nudge = compute_support_resistance_context(candles)
 
     pattern_score = 0.0
     pattern_weight_sum = 0.0
+    bullish_count = 0
+    bearish_count = 0
     breakdown = []
+
     for p in patterns:
+        weight = p["weight"]
         if p["signal"] == "bullish":
-            pattern_score += p["weight"]
+            pattern_score += weight
+            bullish_count += 1
         elif p["signal"] == "bearish":
-            pattern_score -= p["weight"]
-        pattern_weight_sum += p["weight"]
+            pattern_score -= weight
+            bearish_count += 1
+        pattern_weight_sum += weight
         breakdown.append({
             "name": p["name"],
             "signal": p["signal"],
-            "reliability": round(p["weight"] * 100, 0),
+            "reliability": round(weight * 100, 0),
         })
 
     if pattern_weight_sum > 0:
         pattern_score /= pattern_weight_sum
 
-    final_score = (pattern_score * 0.65) + (trend_bias * 0.35)
+    # Confluence: multiple patterns agreeing on the same direction is a
+    # stronger signal than a single pattern; conflicting patterns should
+    # pull confidence back toward neutral.
+    directional_patterns = bullish_count + bearish_count
+    if directional_patterns >= 2:
+        agreement_ratio = max(bullish_count, bearish_count) / directional_patterns
+        confluence_factor = 0.85 + (agreement_ratio - 0.5) * 0.5  # ~0.85 to ~1.10
+    else:
+        confluence_factor = 0.9  # single pattern: slightly conservative
+
+    final_score = (pattern_score * 0.60 + trend_bias * 0.30 + sr_nudge) * confluence_factor
+
+    # Choppy markets: shrink the score toward zero (less confident either way)
+    choppiness_damping = 1.0 - (choppiness * 0.35)
+    final_score *= choppiness_damping
+    final_score = max(-1.0, min(1.0, final_score))
 
     direction = "UP" if final_score >= 0 else "DOWN"
     confidence = min(96, max(54, 55 + abs(final_score) * 42))
@@ -523,4 +608,6 @@ def predict_next_candle(candles):
         "breakdown": breakdown,
         "trend_bias": round(trend_bias, 3),
         "final_score": round(final_score, 3),
+        "choppiness": round(choppiness, 2),
+        "confluence": round(confluence_factor, 2),
     }
