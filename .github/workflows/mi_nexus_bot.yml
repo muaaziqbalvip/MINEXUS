@@ -37,5 +37,8 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
+          FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
+          ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
+          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
         run: |
           python bot.py
