@@ -16,7 +16,7 @@ FONT_BOLD = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
 FONT_REG = os.path.join(FONT_DIR, "DejaVuSans.ttf")
 
 CANVAS_W = 1080
-CANVAS_H = 1920
+CANVAS_H = 2200
 
 # MI NEXUS palette
 BG_TOP = (6, 12, 10)
@@ -52,6 +52,114 @@ def _vertical_gradient(w, h, top_color, bottom_color):
 
 def _rounded_rect(draw, box, radius, fill=None, outline=None, width=1):
     draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+
+
+def _draw_dots(draw, center_x, y, count, filled_count, color, radius=7, spacing=22):
+    """Draws a row of small dots, first `filled_count` filled, rest hollow — used as an intensity meter."""
+    total_w = spacing * (count - 1)
+    start_x = center_x - total_w / 2
+    for i in range(count):
+        cx = start_x + i * spacing
+        if i < filled_count:
+            draw.ellipse((cx - radius, y - radius, cx + radius, y + radius), fill=color)
+        else:
+            draw.ellipse((cx - radius, y - radius, cx + radius, y + radius), outline=(80, 90, 88), width=2)
+
+
+def _draw_bull_icon(draw, cx, cy, size, color):
+    """Geometric bull silhouette: rounded body, curved horns, sturdy legs, upward horn tips for a 'bullish' read."""
+    body_w, body_h = size, size * 0.48
+    body_top = cy - body_h * 0.3
+    body_bottom = cy + body_h * 0.5
+
+    # body (rounded)
+    draw.rounded_rectangle(
+        (cx - body_w / 2, body_top, cx + body_w / 2, body_bottom),
+        radius=body_h * 0.5, outline=color, width=5
+    )
+
+    # head (small circle above body, left side)
+    head_r = size * 0.16
+    head_cx = cx - body_w * 0.32
+    head_cy = body_top - head_r * 0.6
+    draw.ellipse((head_cx - head_r, head_cy - head_r, head_cx + head_r, head_cy + head_r),
+                 outline=color, width=5)
+
+    # horns (curved arcs sweeping upward and outward from the head)
+    horn_r = size * 0.20
+    draw.arc((head_cx - horn_r * 1.6, head_cy - horn_r * 1.7,
+              head_cx + horn_r * 0.4, head_cy + horn_r * 0.3), 200, 320, fill=color, width=5)
+    draw.arc((head_cx - horn_r * 0.4, head_cy - horn_r * 1.9,
+              head_cx + horn_r * 1.6, head_cy + horn_r * 0.1), 220, 340, fill=color, width=5)
+
+    # legs
+    for lx in (-0.32, -0.12, 0.12, 0.32):
+        draw.line((cx + lx * body_w, body_bottom - 4, cx + lx * body_w, body_bottom + size * 0.22),
+                   fill=color, width=5)
+
+    # upward tail flick (bullish motion cue)
+    draw.line((cx + body_w * 0.48, cy, cx + body_w * 0.72, cy - size * 0.28), fill=color, width=5)
+    draw.line((cx + body_w * 0.72, cy - size * 0.28, cx + body_w * 0.62, cy - size * 0.22), fill=color, width=5)
+    draw.line((cx + body_w * 0.72, cy - size * 0.28, cx + body_w * 0.80, cy - size * 0.14), fill=color, width=5)
+
+
+def _draw_bear_icon(draw, cx, cy, size, color):
+    """Geometric bear silhouette: rounder heavy body, round ears, downward motion cue for 'bearish' read."""
+    body_w, body_h = size * 1.05, size * 0.52
+    body_top = cy - body_h * 0.25
+    body_bottom = cy + body_h * 0.55
+
+    # body (rounded, heavier/rounder than the bull)
+    draw.rounded_rectangle(
+        (cx - body_w / 2, body_top, cx + body_w / 2, body_bottom),
+        radius=body_h * 0.55, outline=color, width=5
+    )
+
+    # head (rounder, centered-left)
+    head_r = size * 0.19
+    head_cx = cx - body_w * 0.28
+    head_cy = body_top - head_r * 0.5
+    draw.ellipse((head_cx - head_r, head_cy - head_r, head_cx + head_r, head_cy + head_r),
+                 outline=color, width=5)
+
+    # small round ears
+    ear_r = size * 0.09
+    draw.ellipse((head_cx - head_r * 0.7 - ear_r, head_cy - head_r * 0.9 - ear_r,
+                  head_cx - head_r * 0.7 + ear_r, head_cy - head_r * 0.9 + ear_r), outline=color, width=4)
+    draw.ellipse((head_cx + head_r * 0.7 - ear_r, head_cy - head_r * 0.9 - ear_r,
+                  head_cx + head_r * 0.7 + ear_r, head_cy - head_r * 0.9 + ear_r), outline=color, width=4)
+
+    # snout
+    draw.ellipse((head_cx - head_r * 0.55, head_cy + head_r * 0.15,
+                  head_cx + head_r * 0.75, head_cy + head_r * 0.85), outline=color, width=4)
+
+    # legs (heavier stance)
+    for lx in (-0.34, -0.12, 0.12, 0.34):
+        draw.line((cx + lx * body_w, body_bottom - 4, cx + lx * body_w, body_bottom + size * 0.2),
+                   fill=color, width=6)
+
+    # downward motion cue (bearish claw-swipe / falling arrow)
+    draw.line((cx + body_w * 0.42, cy, cx + body_w * 0.66, cy + size * 0.30), fill=color, width=5)
+    draw.line((cx + body_w * 0.66, cy + size * 0.30, cx + body_w * 0.54, cy + size * 0.26), fill=color, width=5)
+    draw.line((cx + body_w * 0.66, cy + size * 0.30, cx + body_w * 0.70, cy + size * 0.14), fill=color, width=5)
+
+
+def _draw_wave(draw, box, color, amplitude_ratio=0.5, cycles=3.5):
+    """Draws a simple sine-like zig-zag wave inside the given box (volatility visual)."""
+    import math
+    x0, y0, x1, y1 = box
+    w = x1 - x0
+    h = y1 - y0
+    mid_y = y0 + h / 2
+    amp = (h / 2) * amplitude_ratio
+    points = []
+    steps = 60
+    for i in range(steps + 1):
+        t = i / steps
+        x = x0 + t * w
+        y = mid_y + amp * math.sin(t * cycles * 2 * math.pi)
+        points.append((x, y))
+    draw.line(points, fill=color, width=4, joint="curve")
 
 
 def _glow_text(img, xy, text, font, fill, glow_color, glow_radius=8, anchor="la"):
@@ -236,7 +344,7 @@ def render_result_card(
     else:
         condition_label, condition_color = "Choppy", NEON_RED
     draw.text((CANVAS_W - 70, dy), condition_label, font=row_font_b, fill=condition_color, anchor="ra")
-    dy += 46
+    dy += 52
 
     draw.text((dx, dy), "Patterns Detected:", font=row_font, fill=SILVER)
     dy += 42
@@ -253,14 +361,91 @@ def render_result_card(
                    font=_font(FONT_REG, 22), fill=SILVER, anchor="ra")
         dy += 38
 
+    # ---------------- Two-Column Insight Cards: Market Sentiment + Volatility ----------------
+    insight_top = details_bottom + 24
+    insight_h = 260
+    col_gap = 20
+    col_w = (CANVAS_W - 80 - col_gap) / 2
+
+    sentiment_box = (40, insight_top, 40 + col_w, insight_top + insight_h)
+    volatility_box = (40 + col_w + col_gap, insight_top, CANVAS_W - 40, insight_top + insight_h)
+
+    # --- Market Sentiment card ---
+    _rounded_rect(draw, sentiment_box, radius=24, fill=CARD_BG, outline=accent, width=2)
+    sc_cx = (sentiment_box[0] + sentiment_box[2]) / 2
+    label_font_sm = _font(FONT_BOLD, 22)
+    draw.text((sc_cx, sentiment_box[1] + 26), "MARKET SENTIMENT", font=label_font_sm, fill=accent, anchor="ma")
+
+    icon_cy = sentiment_box[1] + 105
+    if is_up:
+        _draw_bull_icon(draw, sc_cx, icon_cy, 100, accent)
+    else:
+        _draw_bear_icon(draw, sc_cx, icon_cy, 100, accent)
+
+    sentiment_label_font = _font(FONT_BOLD, 30)
+    sentiment_text = "BULLISH" if is_up else "BEARISH"
+    draw.text((sc_cx, sentiment_box[1] + 165), sentiment_text, font=sentiment_label_font, fill=accent, anchor="ma")
+
+    # Dot intensity meter reflecting confidence (out of 6 dots)
+    filled_dots = max(1, min(6, round((confidence - 50) / 50 * 6)))
+    _draw_dots(draw, sc_cx, sentiment_box[1] + 215, 6, filled_dots, accent)
+
+    # --- Volatility card ---
+    _rounded_rect(draw, volatility_box, radius=24, fill=CARD_BG, outline=NEON_GREEN, width=2)
+    vc_cx = (volatility_box[0] + volatility_box[2]) / 2
+    draw.text((vc_cx, volatility_box[1] + 26), "VOLATILITY", font=label_font_sm, fill=NEON_GREEN, anchor="ma")
+
+    wave_box = (volatility_box[0] + 24, volatility_box[1] + 65, volatility_box[2] - 24, volatility_box[1] + 140)
+    choppiness = prediction.get("choppiness", 0)
+    if choppiness < 0.3:
+        vol_label, vol_color, vol_dots, wave_cycles = "LOW", NEON_GREEN, 2, 2.0
+    elif choppiness < 0.6:
+        vol_label, vol_color, vol_dots, wave_cycles = "MEDIUM", GOLD, 4, 3.0
+    else:
+        vol_label, vol_color, vol_dots, wave_cycles = "HIGH", NEON_RED, 6, 4.5
+    _draw_wave(draw, wave_box, vol_color, amplitude_ratio=0.55, cycles=wave_cycles)
+
+    draw.text((vc_cx, volatility_box[1] + 165), vol_label, font=sentiment_label_font, fill=vol_color, anchor="ma")
+    _draw_dots(draw, vc_cx, volatility_box[1] + 215, 6, vol_dots, vol_color)
+
+    # ---------------- Tip Box ----------------
+    tip_top = insight_top + insight_h + 20
+    tip_bottom = tip_top + 70
+    tip_box = (40, tip_top, CANVAS_W - 40, tip_bottom)
+    _rounded_rect(draw, tip_box, radius=20, fill=CARD_BG, outline=(50, 70, 65), width=2)
+
+    if confidence >= 85:
+        tip_text = "Strong setup — still confirm before entering."
+    elif choppiness >= 0.6:
+        tip_text = "Choppy market — consider waiting this one out."
+    else:
+        tip_text = "Wait for confirmation before entering a trade."
+
+    tip_font = _font(FONT_REG, 24)
+    tip_font_b = _font(FONT_BOLD, 24)
+    tip_x = 70
+    draw.text((tip_x, (tip_top + tip_bottom) / 2), "💡 TIP:", font=tip_font_b, fill=GOLD, anchor="lm")
+    tip_label_w = draw.textlength("💡 TIP:  ", font=tip_font_b)
+    draw.text((tip_x + tip_label_w, (tip_top + tip_bottom) / 2), tip_text, font=tip_font, fill=SILVER, anchor="lm")
+
+    footer_y_start = tip_bottom + 30
+
     # ---------------- Footer ----------------
     footer_font = _font(FONT_REG, 26)
-    draw.text((CANVAS_W // 2, CANVAS_H - 60),
+    draw.text((CANVAS_W // 2, footer_y_start + 30),
               "⚠ Educational analysis only — not financial advice",
               font=footer_font, fill=(140, 150, 150), anchor="ma")
-    draw.text((CANVAS_W // 2, CANVAS_H - 30),
+    draw.text((CANVAS_W // 2, footer_y_start + 60),
               "MI NEXUS © Muslim Islam Network",
               font=footer_font, fill=SOFT_GREEN, anchor="ma")
+
+    final_height = footer_y_start + 110
+    canvas = canvas.crop((0, 0, CANVAS_W, min(CANVAS_H, final_height) if final_height < CANVAS_H else CANVAS_H))
+    if final_height > CANVAS_H:
+        # extend canvas if content overflowed the default height
+        extended = Image.new("RGBA", (CANVAS_W, final_height), BG_BOTTOM + (255,))
+        extended.paste(canvas, (0, 0))
+        canvas = extended
 
     canvas.convert("RGB").save(output_path, quality=95)
     return output_path

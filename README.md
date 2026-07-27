@@ -18,7 +18,15 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v6 — Smarter Scoring Engine, 74+ Patterns, Your Own Stickers, Auto-Broadcast)
+## Features (v7 — Premium Visual Redesign, Smarter Scoring, 74+ Patterns)
+
+- 🎨 **Redesigned result card** with a premium two-column insight section:
+  - **Market Sentiment card** — animated-style bull/bear icon drawn to match
+    the signal direction, plus a 6-dot confidence-intensity meter
+  - **Volatility card** — a wave visual that gets choppier as market
+    choppiness increases, plus a matching intensity dot meter (LOW/MEDIUM/HIGH)
+  - **Tip box** — a short contextual tip that adapts to the situation
+    (e.g. "Choppy market — consider waiting this one out" when volatility is high)
 
 - 🧠 **Smarter signal-quality scoring** (new in v6):
   - **Confluence bonus** — when multiple detected patterns agree on
