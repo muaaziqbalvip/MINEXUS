@@ -18,7 +18,30 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v8 — Research-Backed Reliability Weights + RSI Confluence)
+## Features (v9 — Firebase Persistence + Paid Subscription System + Admin Panel)
+
+- 🔥 **Firebase Firestore persistence** — all data (users, groups, signal
+  history, payments, plans) now survives GitHub Actions restarts, since it's
+  no longer stored in a local SQLite file that resets between runs
+- 🔐 **Authentication is just Telegram** — no separate Google/email login;
+  each user's Telegram `user_id` is their identity, which is standard for bots
+- 💳 **3-tier paid subscription system**:
+  | Plan | Price | Daily Chart Analyses |
+  |------|-------|----------------------|
+  | Basic | Rs 500/month | 15/day |
+  | Pro | Rs 1000/month | 35/day |
+  | Unlimited | Rs 5000/month | Unlimited |
+- 📷 **Manual QR-code payment flow** — user picks a plan (`/plans`), sees
+  the admin's QR code for that plan, pays via any cash/bank app, then sends
+  a screenshot back to the bot. The screenshot is uploaded to imgBB and the
+  admin gets an Approve/Reject button. Approving instantly activates the plan.
+- 🛠️ **Admin panel** (`/admin`, restricted to your Telegram ID only):
+  - View & approve/reject pending payments
+  - Upload/update the QR code image for each plan
+  - View connected groups
+  - Admin's own usage is exempt from daily limits
+- ⏳ **Daily usage tracking** — each plan enforces its daily analysis limit
+  automatically; limits reset every day, tracked per user in Firestore
 
 - 🔬 **Statistically-recalibrated pattern weights**: reliability scores for
   every pattern were reviewed against independently-published, large-sample
@@ -177,7 +200,19 @@ mi_nexus_bot/
 2. Send `/newbot`, follow prompts
 3. Copy the token it gives you (looks like `123456:ABC-DEF...`)
 
-### 2. Push this project to GitHub
+### 2. Create a Firebase project (for persistent data)
+1. Go to [console.firebase.google.com](https://console.firebase.google.com) → **Add project**
+2. Once created, go to **Build → Firestore Database → Create database**
+   (choose "production mode", pick any region)
+3. Go to **Project Settings (⚙️) → Service Accounts → Generate new private key**
+   — this downloads a JSON file. Keep it safe; you'll paste its full contents
+   into a GitHub Secret in step 4.
+
+### 3. Get an imgBB API key (for payment screenshots + QR codes)
+1. Go to [api.imgbb.com](https://api.imgbb.com) → sign up / log in
+2. Copy your API key from the dashboard
+
+### 4. Push this project to GitHub
 ```bash
 cd mi_nexus_bot
 git init
@@ -188,15 +223,18 @@ git remote add origin https://github.com/YOUR_USERNAME/mi-nexus-bot.git
 git push -u origin main
 ```
 
-### 3. Add GitHub Secrets
+### 5. Add GitHub Secrets
 Go to: **Repo → Settings → Secrets and variables → Actions → New repository secret**
 
-| Secret Name    | Value                              |
-|-----------------|-------------------------------------|
-| `BOT_TOKEN`     | Your Telegram bot token from BotFather |
-| `BOT_PASSWORD`  | `19620MINEXUS` (or change it)       |
+| Secret Name | Value |
+|---|---|
+| `BOT_TOKEN` | Your Telegram bot token from BotFather |
+| `BOT_PASSWORD` | `19620MINEXUS` (or change it) |
+| `FIREBASE_CREDENTIALS_JSON` | Paste the **entire contents** of the service account JSON file from step 2 |
+| `ADMIN_USER_ID` | Your Telegram numeric user ID (get it from @userinfobot) |
+| `IMGBB_API_KEY` | Your imgBB API key from step 3 |
 
-### 4. Enable GitHub Actions
+### 6. Enable GitHub Actions
 - Go to the **Actions** tab in your repo
 - Click **"I understand my workflows, enable them"**
 - Manually trigger **"MI NEXUS Bot 24/7"** once (Run workflow button) to start it
@@ -204,7 +242,12 @@ Go to: **Repo → Settings → Secrets and variables → Actions → New reposit
 The **watchdog** workflow will now check every 15 minutes and auto-restart
 the bot if it stops (crash, GitHub 6-hour job limit, etc.) for near-zero downtime.
 
-### 5. Test it
+### 7. Set up your payment QR codes
+1. Message your bot with `/admin` (only works for your `ADMIN_USER_ID`)
+2. Tap **📷 Set Plan QR Codes** → choose a plan → send the QR code image
+3. Repeat for all 3 plans (Basic / Pro / Unlimited)
+
+### 8. Test it
 - Open Telegram, find your bot, send `/start`
 - Enter password: `19620MINEXUS`
 - Send a chart screenshot
@@ -222,6 +265,9 @@ sudo apt-get install -y tesseract-ocr   # Linux
 pip install -r requirements.txt
 export BOT_TOKEN="your_token_here"
 export BOT_PASSWORD="19620MINEXUS"
+export FIREBASE_CREDENTIALS_JSON='{"type": "service_account", ...}'   # full JSON as one line
+export ADMIN_USER_ID="8865257002"
+export IMGBB_API_KEY="your_imgbb_key"
 python bot.py
 ```
 

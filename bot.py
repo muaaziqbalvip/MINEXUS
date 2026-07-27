@@ -2,16 +2,18 @@
 MI NEXUS TRADING BOT
 Local candlestick pattern analysis + next-candle bias prediction.
 No external AI / paid API used - pure OpenCV + geometric rule engine.
+Data is persisted in Firebase Firestore (survives GitHub Actions restarts).
 
 Run:
     export BOT_TOKEN="your_telegram_bot_token"
+    export FIREBASE_CREDENTIALS_JSON='{...service account json...}'
+    export ADMIN_USER_ID="8865257002"
+    export IMGBB_API_KEY="your_imgbb_key"
     python bot.py
 """
 
 import os
-import json
 import logging
-import sqlite3
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -28,14 +30,24 @@ from utils.indicator_reader import detect_rsi_signal
 from utils.sticker_generator import (
     get_direction_sticker, get_session_start_sticker, get_result_sticker
 )
+from utils.imgbb_uploader import upload_image
+from utils.firebase_db import (
+    init_firebase, get_user, create_user, unlock_user, is_unlocked,
+    set_user_timeframe, get_timeframe, register_group, list_groups,
+    get_group_title, log_signal, set_signal_result, get_win_loss_stats,
+    set_auto_broadcast, get_auto_broadcast_settings,
+    PLAN_LIMITS, get_active_plan, activate_plan, check_and_increment_usage,
+    create_payment_request, get_payment, update_payment_status,
+    list_pending_payments, set_plan_qr_code, get_plan_qr_code,
+)
 
 # ----------------------------------------------------------------------
 # CONFIG
 # ----------------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 BOT_PASSWORD = os.environ.get("BOT_PASSWORD", "19620MINEXUS")
+ADMIN_USER_ID = int(os.environ.get("ADMIN_USER_ID", "8865257002"))
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
-DB_PATH = os.path.join(os.path.dirname(__file__), "mi_nexus.db")
 
 TIMEFRAME_OPTIONS = [
     ("5 Sec", "5s"), ("15 Sec", "15s"), ("30 Sec", "30s"),
@@ -49,197 +61,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("MI_NEXUS")
 
-
-# ----------------------------------------------------------------------
-# DATABASE (SQLite - lightweight local storage, no external DB needed)
-# ----------------------------------------------------------------------
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            unlocked INTEGER DEFAULT 0,
-            timeframe TEXT DEFAULT '1m',
-            username TEXT,
-            joined_at TEXT,
-            auto_broadcast INTEGER DEFAULT 0,
-            selected_group INTEGER DEFAULT NULL
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS groups (
-            chat_id INTEGER PRIMARY KEY,
-            title TEXT,
-            added_at TEXT
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS signal_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            direction TEXT,
-            confidence REAL,
-            timeframe TEXT,
-            result TEXT DEFAULT NULL,
-            created_at TEXT
-        )
-    """)
-    conn.commit()
-
-    # Lightweight migration for existing DBs created by earlier bot versions
-    for col, coltype in (("auto_broadcast", "INTEGER DEFAULT 0"),
-                         ("selected_group", "INTEGER DEFAULT NULL")):
-        try:
-            cur.execute(f"ALTER TABLE users ADD COLUMN {col} {coltype}")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    try:
-        cur.execute("ALTER TABLE signal_log ADD COLUMN result TEXT DEFAULT NULL")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
-
-    conn.close()
-
-
-def get_user(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, unlocked, timeframe FROM users WHERE user_id=?", (user_id,))
-    row = cur.fetchone()
-    conn.close()
-    return row
-
-
-def create_user(user_id, username):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT OR IGNORE INTO users (user_id, unlocked, timeframe, username, joined_at) VALUES (?, 0, '1m', ?, ?)",
-        (user_id, username, datetime.utcnow().isoformat())
-    )
-    conn.commit()
-    conn.close()
-
-
-def unlock_user(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET unlocked=1 WHERE user_id=?", (user_id,))
-    conn.commit()
-    conn.close()
-
-
-def set_user_timeframe(user_id, tf_code):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET timeframe=? WHERE user_id=?", (tf_code, user_id))
-    conn.commit()
-    conn.close()
-
-
-def is_unlocked(user_id):
-    row = get_user(user_id)
-    return bool(row and row[1] == 1)
-
-
-def get_timeframe(user_id):
-    row = get_user(user_id)
-    return row[2] if row else "1m"
-
-
-def register_group(chat_id, title):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT OR REPLACE INTO groups (chat_id, title, added_at) VALUES (?, ?, ?)",
-        (chat_id, title, datetime.utcnow().isoformat())
-    )
-    conn.commit()
-    conn.close()
-
-
-def list_groups():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT chat_id, title FROM groups")
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-def log_signal(user_id, direction, confidence, timeframe):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO signal_log (user_id, direction, confidence, timeframe, created_at) VALUES (?, ?, ?, ?, ?)",
-        (user_id, direction, confidence, timeframe, datetime.utcnow().isoformat())
-    )
-    conn.commit()
-    signal_id = cur.lastrowid
-    conn.close()
-    return signal_id
-
-
-def set_signal_result(signal_id, result):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("UPDATE signal_log SET result=? WHERE id=?", (result, signal_id))
-    conn.commit()
-    conn.close()
-
-
-def get_win_loss_stats(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT COUNT(*) FROM signal_log WHERE user_id=? AND result='WIN'", (user_id,)
-    )
-    wins = cur.fetchone()[0]
-    cur.execute(
-        "SELECT COUNT(*) FROM signal_log WHERE user_id=? AND result='LOSS'", (user_id,)
-    )
-    losses = cur.fetchone()[0]
-    conn.close()
-    return wins, losses
-
-
-def set_auto_broadcast(user_id, enabled, group_id=None):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    if group_id is not None:
-        cur.execute("UPDATE users SET auto_broadcast=?, selected_group=? WHERE user_id=?",
-                    (1 if enabled else 0, group_id, user_id))
-    else:
-        cur.execute("UPDATE users SET auto_broadcast=? WHERE user_id=?",
-                    (1 if enabled else 0, user_id))
-    conn.commit()
-    conn.close()
-
-
-def get_auto_broadcast_settings(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT auto_broadcast, selected_group FROM users WHERE user_id=?", (user_id,))
-    row = cur.fetchone()
-    conn.close()
-    if not row:
-        return False, None
-    return bool(row[0]), row[1]
-
-
-def get_group_title(chat_id):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT title FROM groups WHERE chat_id=?", (chat_id,))
-    row = cur.fetchone()
-    conn.close()
-    return row[0] if row else "Unknown Group"
-
-
 TF_LABELS = {code: label for label, code in TIMEFRAME_OPTIONS}
+
+
+def is_admin(user_id):
+    return user_id == ADMIN_USER_ID
 
 
 # ----------------------------------------------------------------------
@@ -387,6 +213,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
     data = query.data
+
+    # ---- Route plan selection ----
+    if data.startswith("plan_"):
+        plan_id = data.replace("plan_", "")
+        await handle_plan_selection(query, context, plan_id)
+        return
+
+    # ---- Route admin panel callbacks ----
+    if data.startswith("admin_") or data.startswith("setqr_") or data.startswith("payapprove_") or data.startswith("payreject_"):
+        await handle_admin_callback(query, context, data)
+        return
 
     if data == "menu_timeframe":
         keyboard = []
@@ -650,9 +487,40 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # images posted directly inside a group chat.
         return
 
+    # ---- Route: admin uploading a plan QR code ----
+    if is_admin(user.id) and context.user_data.get("awaiting_qr_upload"):
+        await handle_qr_upload(update, context)
+        return
+
+    # ---- Route: user sending a payment screenshot ----
+    if context.user_data.get("awaiting_payment_screenshot"):
+        await handle_payment_screenshot(update, context)
+        return
+
     if not is_unlocked(user.id):
         await update.message.reply_text("🔐 Please enter the access password first. Use /start")
         return
+
+    # ---- Subscription plan gating (admin is exempt) ----
+    if not is_admin(user.id):
+        allowed, remaining, plan_id = check_and_increment_usage(user.id)
+        if not allowed:
+            if plan_id is None:
+                await update.message.reply_text(
+                    "🔒 *No Active Plan*\n\n"
+                    "You need an active subscription to analyze charts.\n"
+                    "Use /plans to see available plans and subscribe.",
+                    parse_mode="Markdown"
+                )
+            else:
+                plan_label = PLAN_LIMITS.get(plan_id, {}).get("label", plan_id)
+                await update.message.reply_text(
+                    f"🔒 *Daily Limit Reached*\n\n"
+                    f"Your *{plan_label}* plan's daily analysis limit is used up.\n"
+                    f"It resets tomorrow, or use /plans to upgrade.",
+                    parse_mode="Markdown"
+                )
+            return
 
     processing_msg = await update.message.reply_text(
         "⚡ *MI NEXUS is scanning the chart...*\n_Detecting candles, patterns & momentum_",
@@ -805,6 +673,239 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await processing_msg.edit_text(f"❌ Error analyzing image: {str(e)}")
 
 
+# ----------------------------------------------------------------------
+# SUBSCRIPTION PLANS + PAYMENT FLOW
+# ----------------------------------------------------------------------
+async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if update.effective_chat.type in ("group", "supergroup"):
+        return
+
+    active_plan = get_active_plan(user.id)
+    if active_plan:
+        plan_label = PLAN_LIMITS.get(active_plan, {}).get("label", active_plan)
+        status_text = f"✅ Your active plan: *{plan_label}*\n\n"
+    else:
+        status_text = "You don't have an active plan yet.\n\n"
+
+    keyboard = [
+        [InlineKeyboardButton("💵 Basic — Rs 500/mo (15/day)", callback_data="plan_basic")],
+        [InlineKeyboardButton("💰 Pro — Rs 1000/mo (35/day)", callback_data="plan_pro")],
+        [InlineKeyboardButton("👑 Unlimited — Rs 5000/mo", callback_data="plan_unlimited")],
+    ]
+    await update.message.reply_text(
+        f"💎 *MI NEXUS Subscription Plans* 💎\n\n"
+        f"{status_text}"
+        f"Choose a plan below to see payment details:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_plan_selection(query, context, plan_id):
+    user_id = query.from_user.id
+    plan_label = PLAN_LIMITS.get(plan_id, {}).get("label", plan_id)
+    qr_url = get_plan_qr_code(plan_id)
+
+    context.user_data["awaiting_payment_screenshot"] = plan_id
+
+    if qr_url:
+        await query.message.reply_photo(
+            photo=qr_url,
+            caption=(
+                f"💳 *{plan_label}*\n\n"
+                f"Scan this QR code to pay, then send a screenshot of your "
+                f"payment confirmation here in this chat.\n\n"
+                f"Once you send the screenshot, it goes to the admin for approval."
+            ),
+            parse_mode="Markdown"
+        )
+    else:
+        await query.message.reply_text(
+            f"💳 *{plan_label}*\n\n"
+            f"⚠️ Payment QR code not set up yet for this plan — please contact the admin.\n\n"
+            f"Once available, send your payment screenshot here after paying.",
+            parse_mode="Markdown"
+        )
+
+
+async def handle_payment_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Called when a user sends a photo while awaiting_payment_screenshot is set."""
+    user = update.effective_user
+    plan_id = context.user_data.get("awaiting_payment_screenshot")
+    context.user_data["awaiting_payment_screenshot"] = None
+
+    photo_file = await update.message.photo[-1].get_file()
+    local_path = f"/tmp/mi_nexus_payment_{user.id}.jpg"
+    await photo_file.download_to_drive(local_path)
+
+    screenshot_url = upload_image(local_path, name=f"payment_{user.id}_{plan_id}")
+    if os.path.exists(local_path):
+        os.remove(local_path)
+
+    if not screenshot_url:
+        await update.message.reply_text(
+            "⚠️ Couldn't upload your screenshot right now. Please try again in a moment."
+        )
+        return
+
+    payment_id = create_payment_request(user.id, user.username or user.first_name, plan_id, screenshot_url)
+    plan_label = PLAN_LIMITS.get(plan_id, {}).get("label", plan_id)
+
+    await update.message.reply_text(
+        "✅ *Payment screenshot received!*\n\n"
+        "Your subscription will be activated once the admin reviews and "
+        "approves it. This is usually quick — thanks for your patience!",
+        parse_mode="Markdown"
+    )
+
+    # Notify admin with approve/reject buttons
+    keyboard = [[
+        InlineKeyboardButton("✅ Approve", callback_data=f"payapprove_{payment_id}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"payreject_{payment_id}"),
+    ]]
+    try:
+        await context.bot.send_photo(
+            chat_id=ADMIN_USER_ID,
+            photo=screenshot_url,
+            caption=(
+                f"💰 *New Payment Request*\n\n"
+                f"User: @{user.username or user.first_name} (ID: `{user.id}`)\n"
+                f"Plan: *{plan_label}*\n"
+                f"Payment ID: `{payment_id}`"
+            ),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.warning(f"Failed to notify admin of payment: {e}")
+
+
+# ----------------------------------------------------------------------
+# ADMIN PANEL
+# ----------------------------------------------------------------------
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id):
+        return  # silently ignore for non-admins
+
+    pending = list_pending_payments()
+    keyboard = [
+        [InlineKeyboardButton(f"💰 Pending Payments ({len(pending)})", callback_data="admin_pending")],
+        [InlineKeyboardButton("📷 Set Plan QR Codes", callback_data="admin_setqr")],
+        [InlineKeyboardButton("👥 Connected Groups", callback_data="menu_groups")],
+    ]
+    await update.message.reply_text(
+        "🛠️ *MI NEXUS Admin Panel*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_admin_callback(query, context, data):
+    user_id = query.from_user.id
+    if not is_admin(user_id):
+        await query.answer("Not authorized.", show_alert=True)
+        return
+
+    if data == "admin_pending":
+        pending = list_pending_payments()
+        if not pending:
+            await query.edit_message_text("✅ No pending payments.")
+            return
+        lines = []
+        for p in pending:
+            plan_label = PLAN_LIMITS.get(p["plan"], {}).get("label", p["plan"])
+            lines.append(f"• @{p.get('username', 'unknown')} — {plan_label} — `{p['payment_id']}`")
+        await query.edit_message_text(
+            "💰 *Pending Payments:*\n\n" + "\n".join(lines) +
+            "\n\n_Use the Approve/Reject buttons sent with each payment notification._",
+            parse_mode="Markdown"
+        )
+
+    elif data == "admin_setqr":
+        keyboard = [
+            [InlineKeyboardButton("Basic Plan QR", callback_data="setqr_basic")],
+            [InlineKeyboardButton("Pro Plan QR", callback_data="setqr_pro")],
+            [InlineKeyboardButton("Unlimited Plan QR", callback_data="setqr_unlimited")],
+        ]
+        await query.edit_message_text(
+            "📷 *Select which plan's QR code to update:*",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("setqr_"):
+        plan_id = data.replace("setqr_", "")
+        context.user_data["awaiting_qr_upload"] = plan_id
+        await query.edit_message_text(
+            f"📷 Send the QR code image for the *{PLAN_LIMITS.get(plan_id, {}).get('label', plan_id)}* plan now.",
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("payapprove_") or data.startswith("payreject_"):
+        payment_id = data.split("_", 1)[1]
+        payment = get_payment(payment_id)
+        if not payment:
+            await query.edit_message_caption(caption="⚠️ Payment record not found (may have been processed already).")
+            return
+
+        target_user_id = payment["user_id"]
+        plan_id = payment["plan"]
+        plan_label = PLAN_LIMITS.get(plan_id, {}).get("label", plan_id)
+
+        if data.startswith("payapprove_"):
+            update_payment_status(payment_id, "approved")
+            activate_plan(target_user_id, plan_id, days=30)
+            await query.edit_message_caption(caption=f"✅ Approved — {plan_label} activated for user {target_user_id}.")
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=f"🎉 *Payment Approved!*\n\nYour *{plan_label}* is now active. Enjoy!",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to notify user of approval: {e}")
+        else:
+            update_payment_status(payment_id, "rejected")
+            await query.edit_message_caption(caption=f"❌ Rejected payment for user {target_user_id}.")
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=(
+                        "❌ *Payment Not Approved*\n\n"
+                        "Your payment screenshot couldn't be verified. "
+                        "Please contact the admin or try again with a clearer screenshot."
+                    ),
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to notify user of rejection: {e}")
+
+
+async def handle_qr_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Called when the admin sends a photo while awaiting_qr_upload is set."""
+    user = update.effective_user
+    plan_id = context.user_data.get("awaiting_qr_upload")
+    context.user_data["awaiting_qr_upload"] = None
+
+    photo_file = await update.message.photo[-1].get_file()
+    local_path = f"/tmp/mi_nexus_qr_{plan_id}.jpg"
+    await photo_file.download_to_drive(local_path)
+
+    qr_url = upload_image(local_path, name=f"qr_{plan_id}")
+    if os.path.exists(local_path):
+        os.remove(local_path)
+
+    if not qr_url:
+        await update.message.reply_text("⚠️ Upload failed — please try again.")
+        return
+
+    set_plan_qr_code(plan_id, qr_url)
+    plan_label = PLAN_LIMITS.get(plan_id, {}).get("label", plan_id)
+    await update.message.reply_text(f"✅ QR code updated for *{plan_label}*.", parse_mode="Markdown")
+
+
 async def error_handler(update, context):
     logger.error("Exception:", exc_info=context.error)
 
@@ -813,12 +914,14 @@ def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is not set!")
 
-    init_db()
+    init_firebase()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_command))
+    app.add_handler(CommandHandler("plans", plans_command))
+    app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

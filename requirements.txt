@@ -3,3 +3,5 @@ opencv-python-headless==4.10.0.84
 Pillow==10.4.0
 numpy==1.26.4
 pytesseract==0.3.13
+firebase-admin==6.5.0
+requests==2.32.3
