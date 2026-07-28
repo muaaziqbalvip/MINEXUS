@@ -18,7 +18,39 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v9 — Firebase Persistence + Paid Subscription System + Admin Panel)
+## Features (v11 — Premium 3D Digital Chart Rendering)
+
+- 🎨 **Redrawn 3D digital candle chart** — instead of pasting your raw
+  screenshot, the bot now redraws the detected candles itself as a clean
+  premium chart: vertical gradient bodies (brighter at top, darker at
+  bottom for a "lit from above" 3D look), glowing wicks, soft drop-shadows,
+  subtle grid lines, and a dashed ghost-candle marker showing the predicted
+  next direction. Falls back to the original screenshot automatically if
+  candle detection doesn't have enough data to redraw from.
+
+- 🚀 **Password removed** — replaced with a one-tap "Create Account / Login"
+  button. Your Telegram account is your identity; there's nothing to type
+  or forget.
+- 🔒 **Bug fixes**: `/menu` → 📊 My Stats and the ✅ WIN / ❌ LOSS buttons
+  were broken (still calling the old removed SQLite code) — both now work
+  correctly against Firestore.
+- 👤 **Client vs Admin separation** (this was a real gap before — fixed now):
+  - Regular clients only ever get **their own personal signal** — analyzing
+    a chart, seeing their own confidence/pattern breakdown, and logging
+    their own WIN/LOSS for their personal stats.
+  - **Auto-Broadcast, Post Session Start, group-share buttons, and posting
+    WIN/LOSS results to groups are admin-only** — a regular client will
+    never see or trigger a group post, even by accident.
+- 🕯️ **89 pattern variants** — expanded further with Three Stars in the
+  South, Breakaway, Side-by-Side White Lines, Ascending/Descending Hawk,
+  Tasuki Gap, Three-Line Strike, Inside/Outside Bar, and Pin Bar (a common
+  price-action term for hammer/shooting-star-style rejection candles) —
+  covering the full canonical candlestick library plus common price-action
+  variants.
+- 📖 **Full step-by-step trading guide built into the bot** (📖 How To Use
+  in the menu) — walks through getting a signal, reading every field on
+  the card, deciding whether to enter, placing the trade, logging the
+  result, and basic risk-management tips.
 
 - 🔥 **Firebase Firestore persistence** — all data (users, groups, signal
   history, payments, plans) now survives GitHub Actions restarts, since it's
@@ -88,7 +120,7 @@ Treat it as an educational aid, not financial advice.
     (true Marubozu) are now distinguished from ones where wick detection
     simply failed, reducing false Marubozu calls
 
-- 🔐 Password-gated access (`BOT_PASSWORD` secret, default `19620MINEXUS`)
+- 🚀 One-tap account creation — no password, Telegram identity only
 - 📸 Send any chart screenshot → instant analysis
 - 🕯️ Detects **74+ pattern variants** — the full classic candlestick library
   (Nison/Bulkowski reference set) plus extra subtle/small formations:
@@ -229,7 +261,6 @@ Go to: **Repo → Settings → Secrets and variables → Actions → New reposit
 | Secret Name | Value |
 |---|---|
 | `BOT_TOKEN` | Your Telegram bot token from BotFather |
-| `BOT_PASSWORD` | `19620MINEXUS` (or change it) |
 | `FIREBASE_CREDENTIALS_JSON` | Paste the **entire contents** of the service account JSON file from step 2 |
 | `ADMIN_USER_ID` | Your Telegram numeric user ID (get it from @userinfobot) |
 | `IMGBB_API_KEY` | Your imgBB API key from step 3 |
@@ -264,7 +295,6 @@ sudo apt-get install -y tesseract-ocr   # Linux
 
 pip install -r requirements.txt
 export BOT_TOKEN="your_token_here"
-export BOT_PASSWORD="19620MINEXUS"
 export FIREBASE_CREDENTIALS_JSON='{"type": "service_account", ...}'   # full JSON as one line
 export ADMIN_USER_ID="8865257002"
 export IMGBB_API_KEY="your_imgbb_key"
@@ -275,7 +305,7 @@ python bot.py
 
 ## Customization
 
-- **Change password:** update `BOT_PASSWORD` secret in GitHub
+- **Account access:** no password needed anymore — access is controlled by the Create Account / Login button + your subscription plan status
 - **Adjust timeframes:** edit `TIMEFRAME_OPTIONS` in `bot.py`
 - **Tune pattern sensitivity:** edit thresholds in `utils/pattern_engine.py`
 - **Change UTC offset:** edit `utc_offset_hours` param passed to `render_result_card()` in `bot.py` (currently set to +5 for Pakistan)

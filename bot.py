@@ -45,7 +45,6 @@ from utils.firebase_db import (
 # CONFIG
 # ----------------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-BOT_PASSWORD = os.environ.get("BOT_PASSWORD", "19620MINEXUS")
 ADMIN_USER_ID = int(os.environ.get("ADMIN_USER_ID", "8865257002"))
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
 
@@ -91,11 +90,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_unlocked(user.id):
         await send_main_menu(update, context)
     else:
+        keyboard = [[InlineKeyboardButton("🚀 Create Account / Login", callback_data="account_login")]]
         await update.message.reply_text(
-            "🔐 *MI NEXUS TRADING BOT*\n\n"
-            "Welcome! This bot is password protected.\n"
-            "Please enter your access password to continue:",
-            parse_mode="Markdown"
+            "💎 *Welcome to MI NEXUS* 💎\n\n"
+            "The world's most advanced local chart pattern analyzer.\n\n"
+            "🕯️ 100+ candlestick patterns\n"
+            "📊 RSI confluence scoring\n"
+            "⬆️⬇️ Next-candle predictions\n"
+            "💎 Premium signal cards\n\n"
+            "Tap below to get started — no password needed, your Telegram "
+            "account *is* your login.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
 
@@ -103,30 +109,37 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     tf = get_timeframe(user_id)
     tf_label = TF_LABELS.get(tf, "1 Min")
-    auto_bc, selected_group = get_auto_broadcast_settings(user_id)
-    bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
 
     keyboard = [
         [InlineKeyboardButton("⏱ Change Timeframe", callback_data="menu_timeframe")],
-        [InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings")],
-        [InlineKeyboardButton("🎬 Post Session Start", callback_data="menu_session_start")],
         [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
-        [InlineKeyboardButton("👥 Active Groups", callback_data="menu_groups")],
-        [InlineKeyboardButton("ℹ️ How It Works", callback_data="menu_help")],
+        [InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status")],
+        [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
     ]
-    markup = InlineKeyboardMarkup(keyboard)
 
     text = (
         "✅ *MI NEXUS UNLOCKED*\n\n"
-        f"⏱ Timeframe: *{tf_label}*\n"
-        f"📢 Auto-Broadcast: *{bc_status}*\n\n"
+        f"⏱ Timeframe: *{tf_label}*\n\n"
         "📸 Send me any trading chart screenshot and I'll analyze it:\n"
-        "• Candlestick pattern detection (55+ patterns)\n"
-        "• Trend momentum scoring\n"
+        "• 100+ candlestick pattern detection\n"
+        "• RSI confluence + trend momentum scoring\n"
         "• Next candle prediction (UP/DOWN)\n"
         "• Confidence percentage\n\n"
         "_Just upload an image to get started!_"
     )
+
+    # Admin gets extra broadcast/session-start controls that regular
+    # clients don't see — clients only ever get their own personal signal.
+    if is_admin(user_id):
+        auto_bc, selected_group = get_auto_broadcast_settings(user_id)
+        bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
+        keyboard.insert(2, [InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings")])
+        keyboard.insert(3, [InlineKeyboardButton("🎬 Post Session Start", callback_data="menu_session_start")])
+        keyboard.insert(4, [InlineKeyboardButton("👥 Active Groups", callback_data="menu_groups")])
+        keyboard.insert(5, [InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_open")])
+        text += f"\n\n🛠️ _Admin controls available below._"
+
+    markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
         await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
@@ -188,16 +201,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Password check
-    if text == BOT_PASSWORD:
-        unlock_user(user.id)
-        await update.message.reply_text(
-            "✅ *Access Granted!* Welcome to MI NEXUS.",
-            parse_mode="Markdown"
-        )
-        await send_main_menu(update, context)
-    else:
-        await update.message.reply_text("❌ Incorrect password. Try again:")
+    # No account yet - prompt them to the Create Account / Login button instead
+    keyboard = [[InlineKeyboardButton("🚀 Create Account / Login", callback_data="account_login")]]
+    await update.message.reply_text(
+        "👋 You don't have an account yet — tap below to get started, no password needed.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -220,9 +229,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_plan_selection(query, context, plan_id)
         return
 
+    # ---- Account creation / login (replaces the old password flow) ----
+    if data == "account_login":
+        unlock_user(user_id)
+        await query.edit_message_text(
+            "✅ *Account Created!*\n\nWelcome to MI NEXUS — you're all set.",
+            parse_mode="Markdown"
+        )
+        await send_main_menu(update, context)
+        return
+
     # ---- Route admin panel callbacks ----
     if data.startswith("admin_") or data.startswith("setqr_") or data.startswith("payapprove_") or data.startswith("payreject_"):
         await handle_admin_callback(query, context, data)
+        return
+
+    # ---- Admin-only guard: broadcast + session-start controls are never
+    # available to regular clients, even if they somehow trigger the callback ----
+    ADMIN_ONLY_PREFIXES = (
+        "menu_broadcast_settings", "autobc_", "menu_session_start",
+        "sessionpick_", "broadcast_", "menu_groups",
+    )
+    if data.startswith(ADMIN_ONLY_PREFIXES) and not is_admin(user_id):
+        await query.edit_message_text("🔒 This feature is available to the admin only.")
         return
 
     if data == "menu_timeframe":
@@ -252,19 +281,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "menu_stats":
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*), SUM(CASE WHEN direction='UP' THEN 1 ELSE 0 END) FROM signal_log WHERE user_id=?", (user_id,))
-        total, ups = cur.fetchone()
-        conn.close()
-        total = total or 0
-        ups = ups or 0
-        downs = total - ups
+        wins, losses = get_win_loss_stats(user_id)
+        total_trades = wins + losses
+        win_rate = round((wins / total_trades) * 100, 1) if total_trades > 0 else 0
+
+        active_plan = get_active_plan(user_id)
+        plan_label = PLAN_LIMITS.get(active_plan, {}).get("label", "No active plan") if active_plan else "No active plan"
+
         await query.edit_message_text(
-            f"📊 *Your Signal Stats*\n\n"
-            f"Total Analyses: *{total}*\n"
-            f"⬆️ UP signals: *{ups}*\n"
-            f"⬇️ DOWN signals: *{downs}*",
+            f"📊 *Your Stats*\n\n"
+            f"💳 Plan: *{plan_label}*\n\n"
+            f"🎯 Trades Recorded: *{total_trades}*\n"
+            f"✅ Wins: *{wins}*\n"
+            f"❌ Losses: *{losses}*\n"
+            f"📈 Win Rate: *{win_rate}%*\n\n"
+            f"_Tap ✅ WIN or ❌ LOSS after each signal to keep this updated._",
             parse_mode="Markdown"
         )
 
@@ -278,32 +309,114 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="Markdown")
 
     elif data == "menu_help":
+        keyboard = [[InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")]]
         await query.edit_message_text(
-            "ℹ️ *How MI NEXUS Works*\n\n"
-            "1️⃣ Send a screenshot of any trading chart\n"
-            "2️⃣ Our engine detects candlesticks using computer vision\n"
-            "3️⃣ Classic patterns are matched (Hammer, Engulfing, Doji, etc.)\n"
-            "4️⃣ Momentum + pattern scoring generates a bias\n"
-            "5️⃣ You get UP/DOWN prediction + confidence %\n\n"
-            "⚠️ *Disclaimer:* This is a technical pattern analysis tool. "
-            "No prediction system can guarantee market outcomes. "
-            "Trade responsibly.",
-            parse_mode="Markdown"
+            "📖 *MI NEXUS — COMPLETE GUIDE* 📖\n\n"
+            "*━━━ STEP 1: Get Your Signal ━━━*\n"
+            "📸 Take a screenshot of your chart (Quotex or any platform) "
+            "showing at least 5-6 recent candles clearly.\n"
+            "Send it directly to this chat.\n\n"
+
+            "*━━━ STEP 2: Read The Signal Card ━━━*\n"
+            "⬆️⬇️ *Direction* — predicted next-candle move (UP/DOWN)\n"
+            "📊 *Confidence %* — how strong the signal is (54-96%)\n"
+            "🔥 *Strength* — WEAK / MODERATE / STRONG / VERY STRONG\n"
+            "🕯️ *Patterns* — which candlestick patterns were detected\n"
+            "📈 *Market Condition* — Clean Trend / Mixed / Choppy\n"
+            "📉 *RSI Zone* — Overbought/Oversold/Neutral, if detected\n\n"
+
+            "*━━━ STEP 3: Decide Whether To Trade ━━━*\n"
+            "✅ Best conditions to enter:\n"
+            "  • Confidence 72%+ (STRONG or VERY STRONG)\n"
+            "  • Market Condition = Clean Trend\n"
+            "  • RSI agrees with the direction (if shown)\n\n"
+            "⚠️ Be cautious / consider skipping when:\n"
+            "  • Confidence is below 62% (WEAK)\n"
+            "  • Market Condition = Choppy\n"
+            "  • RSI disagrees with the pattern direction\n\n"
+
+            "*━━━ STEP 4: Set Your Timeframe ━━━*\n"
+            "Use ⏱ Change Timeframe in the menu to match your trade "
+            "duration (5 sec up to 1 hour) — this is shown on your card "
+            "for reference.\n\n"
+
+            "*━━━ STEP 5: Place Your Trade ━━━*\n"
+            "Open your broker platform, select the same pair as your "
+            "chart, and place the trade in the *same direction* as the "
+            "signal, for your chosen timeframe.\n\n"
+
+            "*━━━ STEP 6: Log Your Result ━━━*\n"
+            "After the trade closes, come back and tap ✅ WIN or ❌ LOSS "
+            "under your signal — this updates your personal stats "
+            "(📊 My Stats) so you can track your performance over time.\n\n"
+
+            "*━━━ Risk Management Tips ━━━*\n"
+            "• Never risk more than you can afford to lose\n"
+            "• Don't chase losses with bigger trades\n"
+            "• Skip choppy/low-confidence signals — waiting is a valid choice\n"
+            "• Treat this as ONE input among many, not a guarantee\n\n"
+
+            "⚠️ *Disclaimer:* This is a technical pattern-analysis tool. "
+            "No prediction system — human or automated — can guarantee "
+            "market outcomes. Trade responsibly and at your own risk.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     elif data == "menu_back":
-        auto_bc, _ = get_auto_broadcast_settings(user_id)
-        bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
         keyboard = [
             [InlineKeyboardButton("⏱ Change Timeframe", callback_data="menu_timeframe")],
-            [InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings")],
-            [InlineKeyboardButton("🎬 Post Session Start", callback_data="menu_session_start")],
             [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
-            [InlineKeyboardButton("👥 Active Groups", callback_data="menu_groups")],
-            [InlineKeyboardButton("ℹ️ How It Works", callback_data="menu_help")],
+            [InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status")],
+            [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
         ]
+        if is_admin(user_id):
+            auto_bc, _ = get_auto_broadcast_settings(user_id)
+            bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
+            keyboard.insert(2, [InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings")])
+            keyboard.insert(3, [InlineKeyboardButton("🎬 Post Session Start", callback_data="menu_session_start")])
+            keyboard.insert(4, [InlineKeyboardButton("👥 Active Groups", callback_data="menu_groups")])
+            keyboard.insert(5, [InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_open")])
         await query.edit_message_text(
             "✅ *MI NEXUS Main Menu*", parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # ---------------- Plan Status (client-facing) ----------------
+    elif data == "menu_plan_status":
+        active_plan = get_active_plan(user_id)
+        if active_plan:
+            plan_label = PLAN_LIMITS.get(active_plan, {}).get("label", active_plan)
+            limit = PLAN_LIMITS.get(active_plan, {}).get("daily_limit")
+            limit_text = "Unlimited" if limit is None else f"{limit}/day"
+            await query.edit_message_text(
+                f"💳 *Your Plan*\n\n"
+                f"Active Plan: *{plan_label}*\n"
+                f"Daily Limit: *{limit_text}*\n\n"
+                f"Use /plans to upgrade or renew.",
+                parse_mode="Markdown"
+            )
+        else:
+            await query.edit_message_text(
+                "💳 *No Active Plan*\n\n"
+                "You don't have a subscription yet.\n"
+                "Use /plans to see available plans and subscribe.",
+                parse_mode="Markdown"
+            )
+
+    # ---------------- Open Admin Panel from main menu ----------------
+    elif data == "admin_open":
+        if not is_admin(user_id):
+            return
+        pending = list_pending_payments()
+        keyboard = [
+            [InlineKeyboardButton(f"💰 Pending Payments ({len(pending)})", callback_data="admin_pending")],
+            [InlineKeyboardButton("📷 Set Plan QR Codes", callback_data="admin_setqr")],
+            [InlineKeyboardButton("👥 Connected Groups", callback_data="menu_groups")],
+        ]
+        await query.edit_message_text(
+            "🛠️ *MI NEXUS Admin Panel*",
+            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -436,46 +549,52 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---------------- Win / Loss Result ----------------
     elif data.startswith("result_"):
         _, result, signal_id = data.split("_", 2)
-        signal_id = int(signal_id)
         set_signal_result(signal_id, result.upper())
 
         is_win = result.upper() == "WIN"
-        result_sticker_path = get_result_sticker(
-            is_win, output_path=f"/tmp/mi_nexus_result_sticker_{user_id}_{signal_id}.webp"
-        )
-
-        auto_bc, selected_group = get_auto_broadcast_settings(user_id)
-        target_groups = []
-        if selected_group:
-            target_groups = [(selected_group, get_group_title(selected_group))]
-        else:
-            target_groups = list_groups()[:1]  # fallback: first known group
-
-        emoji = "🎉✅" if is_win else "❌💪"
-        result_caption = (
-            f"{emoji} *TRADE RESULT: {result.upper()}* {emoji}\n\n"
-            f"MI NEXUS Signal Outcome\n"
-            f"_{'Great call! Onwards to the next one.' if is_win else 'Not every trade wins — stay disciplined.'}_"
-        )
-
-        sent = 0
-        for chat_id, title in target_groups:
-            try:
-                if result_sticker_path:
-                    with open(result_sticker_path, "rb") as sticker:
-                        await context.bot.send_sticker(chat_id=chat_id, sticker=sticker)
-                await context.bot.send_message(chat_id=chat_id, text=result_caption, parse_mode="Markdown")
-                sent += 1
-            except Exception as e:
-                logger.warning(f"Failed to post result to {chat_id}: {e}")
-
         wins, losses = get_win_loss_stats(user_id)
+        total = wins + losses
+        win_rate = round((wins / total) * 100, 1) if total > 0 else 0
+
         await query.edit_message_text(
-            f"{'✅' if is_win else '❌'} Result logged: *{result.upper()}*\n"
-            f"Posted to {sent} group(s).\n\n"
-            f"📊 Your Record: *{wins}W / {losses}L*",
+            f"{'✅' if is_win else '❌'} Result logged: *{result.upper()}*\n\n"
+            f"📊 Your Record: *{wins}W / {losses}L* ({win_rate}% win rate)",
             parse_mode="Markdown"
         )
+
+        # Only the ADMIN's results get posted to groups - regular clients
+        # just log their own personal result privately.
+        if is_admin(user_id):
+            result_sticker_path = get_result_sticker(
+                is_win, output_path=f"/tmp/mi_nexus_result_sticker_{user_id}_{signal_id}.webp"
+            )
+            auto_bc, selected_group = get_auto_broadcast_settings(user_id)
+            target_groups = []
+            if selected_group:
+                target_groups = [(selected_group, get_group_title(selected_group))]
+            else:
+                target_groups = list_groups()[:1]
+
+            emoji = "🎉✅" if is_win else "❌💪"
+            result_caption = (
+                f"{emoji} *TRADE RESULT: {result.upper()}* {emoji}\n\n"
+                f"MI NEXUS Signal Outcome\n"
+                f"_{'Great call! Onwards to the next one.' if is_win else 'Not every trade wins — stay disciplined.'}_"
+            )
+
+            sent = 0
+            for chat_id, title in target_groups:
+                try:
+                    if result_sticker_path:
+                        with open(result_sticker_path, "rb") as sticker:
+                            await context.bot.send_sticker(chat_id=chat_id, sticker=sticker)
+                    await context.bot.send_message(chat_id=chat_id, text=result_caption, parse_mode="Markdown")
+                    sent += 1
+                except Exception as e:
+                    logger.warning(f"Failed to post result to {chat_id}: {e}")
+
+            if sent:
+                await query.message.reply_text(f"📢 Also posted to {sent} group(s).")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -561,6 +680,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             utc_offset_hours=5,
             logo_path=LOGO_PATH if os.path.exists(LOGO_PATH) else None,
             output_path=output_path,
+            candles=candles,
         )
 
         log_id = log_signal(user.id, prediction["direction"], prediction["confidence"], tf_code)
@@ -621,44 +741,46 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["last_signal_confidence"] = prediction["confidence"]
         context.user_data["last_signal_id"] = log_id
 
-        # ---- Auto-broadcast: if enabled, send straight to the selected group ----
-        auto_bc, selected_group = get_auto_broadcast_settings(user.id)
-        if auto_bc and selected_group:
-            try:
-                with open(output_path, "rb") as img:
-                    await context.bot.send_photo(
-                        chat_id=selected_group, photo=img,
-                        caption=caption, parse_mode="Markdown"
+        # ---- Auto-broadcast: ADMIN ONLY. Regular clients never get group
+        # broadcast controls - they only ever receive their own signal. ----
+        if is_admin(user.id):
+            auto_bc, selected_group = get_auto_broadcast_settings(user.id)
+            if auto_bc and selected_group:
+                try:
+                    with open(output_path, "rb") as img:
+                        await context.bot.send_photo(
+                            chat_id=selected_group, photo=img,
+                            caption=caption, parse_mode="Markdown"
+                        )
+                    if sticker_path:
+                        with open(sticker_path, "rb") as sticker:
+                            await context.bot.send_sticker(chat_id=selected_group, sticker=sticker)
+                    await update.message.reply_text(
+                        f"📢 Auto-broadcast: sent to *{get_group_title(selected_group)}*",
+                        parse_mode="Markdown"
                     )
-                if sticker_path:
-                    with open(sticker_path, "rb") as sticker:
-                        await context.bot.send_sticker(chat_id=selected_group, sticker=sticker)
-                await update.message.reply_text(
-                    f"📢 Auto-broadcast: sent to *{get_group_title(selected_group)}*",
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logger.warning(f"Auto-broadcast failed: {e}")
-                await update.message.reply_text("⚠️ Auto-broadcast failed — group may have removed the bot.")
-        else:
-            groups = list_groups()
-            if groups:
-                keyboard = [[InlineKeyboardButton(
-                    f"📢 Send to {title}", callback_data=f"broadcast_{chat_id}"
-                )] for chat_id, title in groups[:8]]
-                keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", callback_data="broadcast_all")])
-                await update.message.reply_text(
-                    "Want to share this signal to your groups?",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
+                except Exception as e:
+                    logger.warning(f"Auto-broadcast failed: {e}")
+                    await update.message.reply_text("⚠️ Auto-broadcast failed — group may have removed the bot.")
+            else:
+                groups = list_groups()
+                if groups:
+                    keyboard = [[InlineKeyboardButton(
+                        f"📢 Send to {title}", callback_data=f"broadcast_{chat_id}"
+                    )] for chat_id, title in groups[:8]]
+                    keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", callback_data="broadcast_all")])
+                    await update.message.reply_text(
+                        "Want to share this signal to your groups?",
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
 
-        # ---- WIN / LOSS result buttons ----
+        # ---- WIN / LOSS result buttons (personal record for everyone) ----
         result_keyboard = [[
             InlineKeyboardButton("✅ WIN", callback_data=f"result_WIN_{log_id}"),
             InlineKeyboardButton("❌ LOSS", callback_data=f"result_LOSS_{log_id}"),
         ]]
         await update.message.reply_text(
-            "📋 *After your trade closes, tap the result:*",
+            "📋 *After your trade closes, tap the result to log it:*",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(result_keyboard)
         )

@@ -115,6 +115,21 @@ PATTERN_RELIABILITY = {
     "Rickshaw Man": 0.30,
     "Gapping Doji Bullish": 0.45,
     "Gapping Doji Bearish": 0.45,
+    "Three Stars in the South": 0.62,
+    "Breakaway Bullish": 0.58,
+    "Breakaway Bearish": 0.58,
+    "Side-by-Side White Lines": 0.42,
+    "Descending Hawk": 0.45,
+    "Ascending Hawk": 0.45,
+    "Tasuki Gap Bullish": 0.50,
+    "Tasuki Gap Bearish": 0.50,
+    "Three-Line Strike Bullish": 0.72,
+    "Three-Line Strike Bearish": 0.72,
+    "Engulfing Bar (Momentum)": 0.55,
+    "Inside Bar": 0.35,
+    "Outside Bar": 0.45,
+    "Pin Bar Bullish": 0.60,
+    "Pin Bar Bearish": 0.60,
 }
 
 
@@ -412,6 +427,77 @@ def detect_patterns(candles):
                 and c2.body_top < c3.body_bottom
                 and c1.is_bullish() and c1.body_bottom <= c2.body_top and c1.body_top >= c3.body_bottom):
             add("Downside Gap Three Methods", "bearish")
+
+        # Three Stars in the South (rare): three small, decreasing bearish
+        # candles after a downtrend, signaling seller exhaustion
+        if (c3.is_bearish() and c2.is_bearish() and c1.is_bearish()
+                and c3.body_ratio() > c2.body_ratio() > c1.body_ratio()
+                and c1.body_ratio() < 0.35
+                and c2.body_bottom >= c3.body_bottom and c1.body_bottom >= c2.body_bottom):
+            add("Three Stars in the South", "bullish")
+
+        # Breakaway (5-candle textbook pattern approximated with 3 here):
+        # strong move candle, small-bodied follow-through, then a strong
+        # candle back in the opposite direction - momentum exhaustion cue
+        if (c3.body_ratio() > 0.6 and c2.body_ratio() < 0.35):
+            if c3.is_bearish() and c1.is_bullish() and c1.body_ratio() > 0.5 and c1.body_top > c3.body_top:
+                add("Breakaway Bullish", "bullish")
+            elif c3.is_bullish() and c1.is_bearish() and c1.body_ratio() > 0.5 and c1.body_bottom < c3.body_bottom:
+                add("Breakaway Bearish", "bearish")
+
+        # Descending/Ascending Hawk: engulfing-like pair but with overlapping
+        # opens (weaker version of engulfing, still a caution signal)
+        if (c2.is_bullish() and c1.is_bearish()
+                and c1.body_top < c2.body_top and c1.body_bottom > c2.body_bottom
+                and c1.body_ratio() > 0.3):
+            add("Descending Hawk", "bearish")
+        if (c2.is_bearish() and c1.is_bullish()
+                and c1.body_top < c2.body_top and c1.body_bottom > c2.body_bottom
+                and c1.body_ratio() > 0.3):
+            add("Ascending Hawk", "bullish")
+
+    # Side-by-Side White Lines: two similar-sized bullish candles with close opens (continuation)
+    if c2 and c1.is_bullish() and c2.is_bullish():
+        if (abs(c1.body_ratio() - c2.body_ratio()) < 0.15
+                and abs(c1.body_bottom - c2.body_bottom) < c1.total_range * 0.08
+                and c1.body_ratio() > 0.4):
+            add("Side-by-Side White Lines", "bullish")
+
+    # Tasuki Gap: trend candle, gap continuation candle, then a pullback
+    # candle that doesn't fully close the gap (continuation signal)
+    if c3 and c2 and c1:
+        if (c3.is_bullish() and c2.is_bullish() and c2.body_bottom > c3.body_top
+                and c1.is_bearish() and c1.body_top > c3.body_top and c1.body_bottom < c2.body_bottom):
+            add("Tasuki Gap Bullish", "bullish")
+        if (c3.is_bearish() and c2.is_bearish() and c2.body_top < c3.body_bottom
+                and c1.is_bullish() and c1.body_bottom < c3.body_bottom and c1.body_top > c2.body_top):
+            add("Tasuki Gap Bearish", "bearish")
+
+    # Three-Line Strike: three candles same direction, then a fourth candle
+    # that fully reverses all three - strong reversal signal
+    if c4 and c3 and c2 and c1:
+        if (c4.is_bullish() and c3.is_bullish() and c2.is_bullish()
+                and c3.body_bottom >= c4.body_bottom and c2.body_bottom >= c3.body_bottom
+                and c1.is_bearish() and c1.body_top >= c2.body_top and c1.body_bottom <= c4.body_bottom):
+            add("Three-Line Strike Bearish", "bearish")
+        if (c4.is_bearish() and c3.is_bearish() and c2.is_bearish()
+                and c3.body_top <= c4.body_top and c2.body_top <= c3.body_top
+                and c1.is_bullish() and c1.body_bottom <= c2.body_bottom and c1.body_top >= c4.body_top):
+            add("Three-Line Strike Bullish", "bullish")
+
+    # Inside Bar / Outside Bar (simple containment/expansion context patterns)
+    if c2:
+        if c1.wick_top >= c2.wick_top and c1.wick_bottom <= c2.wick_bottom:
+            add("Outside Bar", "bullish" if c1.is_bullish() else "bearish")
+        elif c1.wick_top <= c2.wick_top and c1.wick_bottom >= c2.wick_bottom:
+            add("Inside Bar", "neutral")
+
+    # Pin Bar (forex/price-action term for hammer/shooting-star-like rejection candles)
+    if c1.body_ratio() < 0.3:
+        if c1.lower_wick_ratio() > 0.6:
+            add("Pin Bar Bullish", "bullish")
+        elif c1.upper_wick_ratio() > 0.6:
+            add("Pin Bar Bearish", "bearish")
 
     # ================= CANDLE-SIZE CLASSIFICATION (context, not a signal) =================
     if c1.body_ratio() > 0.6 and c1.total_range > 0:
