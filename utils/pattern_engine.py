@@ -638,7 +638,37 @@ def compute_support_resistance_context(candles, lookback=12):
     return 0.0
 
 
-def predict_next_candle(candles, rsi_signal=None):
+def compute_streak_bonus(candles, lookback=6):
+    """
+    Detects consecutive same-direction candle streaks at the tail of the
+    series (momentum persistence). A run of 3+ same-colored candles in a
+    row has historically shown a mild continuation bias in short-timeframe
+    binary/forex charts — this adds a small, capped nudge on top of the
+    broader trend_bias so genuine momentum runs get slightly more credit
+    without overwhelming the pattern-based signal.
+    Returns a value between -0.12 and +0.12.
+    """
+    recent = _last(candles, lookback)
+    if len(recent) < 3:
+        return 0.0
+
+    streak = 1
+    last_dir = recent[-1].is_bullish()
+    for c in reversed(recent[:-1]):
+        if c.is_bullish() == last_dir:
+            streak += 1
+        else:
+            break
+
+    if streak < 3:
+        return 0.0
+
+    capped_streak = min(streak, 6)
+    magnitude = 0.03 * (capped_streak - 2)  # 3->0.03, 4->0.06, 5->0.09, 6->0.12
+    return magnitude if last_dir else -magnitude
+
+
+def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
     """
     Combines pattern signals + trend momentum + market context into a
     final prediction. Improvements over the basic version:
@@ -655,11 +685,20 @@ def predict_next_candle(candles, rsi_signal=None):
         mirrors the well-documented real-world finding that combining RSI
         with candlestick confirmation improves signal accuracy versus
         using candlesticks alone.
+      - Streak/momentum persistence: a run of 3+ consecutive same-direction
+        candles gets a small, capped continuation nudge (see
+        compute_streak_bonus), since short-timeframe momentum tends to
+        persist briefly before reversing.
+      - `sensitivity` is an admin-tunable multiplier (0.7-1.3, default 1.0)
+        applied to the final score before clamping — lets the admin dial
+        the engine to be more conservative or more aggressive globally
+        without touching the underlying pattern weights.
     """
     patterns = detect_patterns(candles)
     trend_bias = compute_trend_bias(candles)
     choppiness = compute_market_choppiness(candles)
     sr_nudge = compute_support_resistance_context(candles)
+    streak_bonus = compute_streak_bonus(candles)
 
     pattern_score = 0.0
     pattern_weight_sum = 0.0
@@ -695,11 +734,14 @@ def predict_next_candle(candles, rsi_signal=None):
     else:
         confluence_factor = 0.9  # single pattern: slightly conservative
 
-    final_score = (pattern_score * 0.60 + trend_bias * 0.30 + sr_nudge) * confluence_factor
+    final_score = (pattern_score * 0.58 + trend_bias * 0.28 + sr_nudge + streak_bonus) * confluence_factor
 
     # Choppy markets: shrink the score toward zero (less confident either way)
     choppiness_damping = 1.0 - (choppiness * 0.35)
     final_score *= choppiness_damping
+
+    # Admin-tunable global sensitivity (0.7 conservative .. 1.3 aggressive)
+    final_score *= max(0.7, min(1.3, sensitivity))
 
     # RSI confluence nudge: agreement = small confidence boost, disagreement
     # = small pull-back. Kept modest since our RSI reading is a visual
@@ -738,6 +780,8 @@ def predict_next_candle(candles, rsi_signal=None):
         "final_score": round(final_score, 3),
         "choppiness": round(choppiness, 2),
         "confluence": round(confluence_factor, 2),
+        "streak_bonus": round(streak_bonus, 3),
+        "sensitivity": round(sensitivity, 2),
         "rsi_signal": rsi_signal if rsi_signal and rsi_signal.get("detected") else None,
         "rsi_agrees": rsi_agrees,
     }

@@ -18,6 +18,40 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
+## 🆕 What's New — v13 (Pro Upgrade)
+
+- 🎁 **Free Trial System** — every new account gets a one-time offer:
+  **10 free signal analyses, valid for 1 day**. Claimed via a button right
+  after account creation, from `/plans`, or from the "My Plan" menu. Once
+  used (or expired), it can never be re-claimed on the same account.
+- 🚫 **Block / Freeze Members** — the admin panel now has a full **Manage
+  Members** screen (paginated, 5 users at a time) with one-tap **Block /
+  Unblock** and **Freeze / Unfreeze** buttons next to every user, plus a
+  `/finduser <username>` command for instant lookup. Blocked users are cut
+  off everywhere (menu, photos, text); frozen users keep their profile but
+  lose plan access until unfrozen.
+- 🎚️ **Live Signal Sensitivity Tuner** — admin-only slider (0.7x-1.3x) that
+  scales every prediction's confidence score in real time, no redeploy
+  needed. Also added a **streak/momentum bonus** to the pattern engine
+  (rewards 3+ consecutive same-direction candles) for sharper calls.
+  New global config is stored in Firestore (`bot_config` collection).
+  See `utils/pattern_engine.py::compute_streak_bonus`.
+- 📢 **Broadcast Text Announcements** — admin can now send a free-text
+  announcement to every connected group in one tap, in addition to the
+  existing auto-broadcast/session-start tools.
+- 💎 **3D Pro-Level Signal Cards** — the result image now has layered drop
+  shadows, beveled glass-style card edges, a diagonal "PRO" ribbon badge,
+  and a glowing/glassy confidence bar — while still pasting your real
+  uploaded chart 1:1 (no fake redraw). See `utils/image_renderer.py`.
+- ⚡ **Animated Boot-Up Intro** — first-time `/start` now plays a short
+  "MI NEXUS BOOT SEQUENCE" progress animation (0% -> 100%) via live message
+  edits before the welcome card appears — no external video/GIF needed.
+- 🧭 **Unified main menu** — timeframe, stats, plan, and upgrade shortcuts
+  reorganized into a shared keyboard builder so the `/menu` and "Back"
+  button always stay in sync.
+
+---
+
 ## Features (v12 — Fixed Chart Rendering + Live Progress Animation)
 
 - 🛠️ **Chart rendering bug fixed**: an earlier attempt at redrawing candles

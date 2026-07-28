@@ -54,6 +54,68 @@ def _rounded_rect(draw, box, radius, fill=None, outline=None, width=1):
     draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
 
 
+def _drop_shadow(canvas, box, radius, offset=(0, 10), blur=22, opacity=140):
+    """Draws a soft blurred shadow behind a card box for pseudo-3D depth."""
+    x0, y0, x1, y1 = box
+    ox, oy = offset
+    shadow_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    sdraw = ImageDraw.Draw(shadow_layer)
+    sdraw.rounded_rectangle((x0 + ox, y0 + oy, x1 + ox, y1 + oy), radius=radius, fill=(0, 0, 0, opacity))
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(blur))
+    canvas.alpha_composite(shadow_layer)
+
+
+def _bevel_card(draw, box, radius, fill, top_light, bottom_dark, width=3):
+    """
+    Fakes a 3D beveled-glass edge: draws the card fill, then a bright
+    top-left partial arc/line and a darker bottom-right partial line so
+    the card reads as having physical depth rather than a flat outline.
+    """
+    x0, y0, x1, y1 = box
+    _rounded_rect(draw, box, radius, fill=fill)
+    # bottom-right dark edge (shadow side)
+    draw.arc((x0, y0, x1, y1), start=20, end=160, fill=bottom_dark, width=width)
+    # top-left light edge (highlight side)
+    draw.arc((x0, y0, x1, y1), start=200, end=340, fill=top_light, width=width)
+    # crisp thin outline on top for definition
+    draw.rounded_rectangle(box, radius=radius, outline=top_light, width=1)
+
+
+def _glass_shine(canvas, box, radius, opacity=34):
+    """Adds a soft diagonal highlight band across the top of a card, like
+    light glinting off glass — reinforces the premium/3D feel."""
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    shine_layer = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    sdraw = ImageDraw.Draw(shine_layer)
+    sdraw.polygon(
+        [(0, 0), (w * 0.55, 0), (w * 0.25, h * 0.5), (0, h * 0.5)],
+        fill=(255, 255, 255, opacity)
+    )
+    shine_layer = shine_layer.filter(ImageFilter.GaussianBlur(6))
+    mask = Image.new("L", (int(w), int(h)), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w, h), radius=radius, fill=255)
+    # Clip the shine to the card's rounded shape before compositing, so it
+    # never spills outside the card's corners.
+    clipped_shine = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    clipped_shine.paste(shine_layer, (0, 0), mask)
+    composed = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    composed.paste(clipped_shine, (int(x0), int(y0)), clipped_shine)
+    canvas.alpha_composite(composed)
+
+
+def _pro_ribbon(canvas, top_right_xy, accent):
+    # Small diagonal 'PRO' ribbon badge in a card's top-right corner.
+    x, y = top_right_xy
+    ribbon = Image.new("RGBA", (170, 170), (0, 0, 0, 0))
+    rdraw = ImageDraw.Draw(ribbon)
+    rdraw.polygon([(30, 0), (170, 0), (170, 140), (140, 170), (0, 40)], fill=accent + (235,))
+    ribbon = ribbon.rotate(0)
+    font = _font(FONT_BOLD, 24)
+    rdraw.text((100, 45), "PRO", font=font, fill=(10, 15, 12), anchor="mm")
+    canvas.alpha_composite(ribbon, (int(x) - 170, int(y)))
+
+
 def _draw_dots(draw, center_x, y, count, filled_count, color, radius=7, spacing=22):
     """Draws a row of small dots, first `filled_count` filled, rest hollow — used as an intensity meter."""
     total_w = spacing * (count - 1)
@@ -248,7 +310,16 @@ def render_result_card(
     y_cursor += 58
     draw.text((CANVAS_W // 2, y_cursor), "ANALYZE  •  PREDICT  •  PROFIT",
               font=sub_font, fill=SOFT_GREEN, anchor="ma")
-    y_cursor += 40
+    y_cursor += 36
+
+    pro_tag_font = _font(FONT_BOLD, 20)
+    pro_tag_text = "⚙ V5 PRO ENGINE"
+    pro_tag_w = draw.textlength(pro_tag_text, font=pro_tag_font)
+    pro_tag_box = (CANVAS_W // 2 - pro_tag_w / 2 - 16, y_cursor,
+                   CANVAS_W // 2 + pro_tag_w / 2 + 16, y_cursor + 32)
+    _rounded_rect(draw, pro_tag_box, radius=16, fill=(18, 26, 24), outline=GOLD, width=1)
+    draw.text((CANVAS_W // 2, y_cursor + 16), pro_tag_text, font=pro_tag_font, fill=GOLD, anchor="mm")
+    y_cursor += 46
 
     # Pair name badge
     pair_font = _font(FONT_BOLD, 32)
@@ -261,11 +332,19 @@ def render_result_card(
     draw.text((CANVAS_W // 2, y_cursor + 27), pair_text, font=pair_font, fill=(255, 255, 255), anchor="mm")
     y_cursor += 74
 
-    # ---------------- Chart Card ----------------
+    # ---------------- Chart Card (3D depth: shadow + bevel + glass shine) ----------------
     card_top = y_cursor
     card_bottom = card_top + 840
     card_box = (40, card_top, CANVAS_W - 40, card_bottom)
-    _rounded_rect(draw, card_box, radius=32, fill=CARD_BG, outline=CARD_BORDER, width=3)
+    _drop_shadow(canvas, card_box, radius=32, offset=(0, 14), blur=26, opacity=150)
+    draw = ImageDraw.Draw(canvas)
+    _bevel_card(draw, card_box, radius=32, fill=CARD_BG,
+                top_light=(120, 255, 180), bottom_dark=(0, 0, 0), width=4)
+    draw.rounded_rectangle(card_box, radius=32, outline=CARD_BORDER, width=2)
+    _glass_shine(canvas, card_box, radius=32, opacity=26)
+    draw = ImageDraw.Draw(canvas)
+    _pro_ribbon(canvas, (CANVAS_W - 40, card_top), accent)
+    draw = ImageDraw.Draw(canvas)
 
     chart_box = (70, card_top + 25, CANVAS_W - 70, card_bottom - 210)
     _paste_chart(canvas, chart_image_path, chart_box)
@@ -297,23 +376,34 @@ def render_result_card(
     draw = ImageDraw.Draw(canvas)
     info_y += 58
 
-    # Confidence bar
+    # Confidence bar (with glass shine strip + soft glow for a premium feel)
     bar_w = CANVAS_W - 200
     bar_x0 = 100
     bar_y0 = info_y
-    bar_h = 26
-    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h), radius=13,
-                  fill=(30, 40, 38))
-    fill_w = int(bar_w * (confidence / 100))
-    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + fill_w, bar_y0 + bar_h), radius=13, fill=accent)
-    draw.text((CANVAS_W // 2, bar_y0 + bar_h + 20), f"CONFIDENCE: {confidence}%",
+    bar_h = 30
+    _drop_shadow(canvas, (bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h), radius=15,
+                 offset=(0, 4), blur=10, opacity=90)
+    draw = ImageDraw.Draw(canvas)
+    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h), radius=15,
+                  fill=(28, 38, 36), outline=(55, 75, 70), width=1)
+    fill_w = max(bar_h, int(bar_w * (confidence / 100)))
+    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + fill_w, bar_y0 + bar_h), radius=15, fill=accent)
+    # thin bright highlight line near the top of the fill for a glassy 3D look
+    if fill_w > 16:
+        draw.line((bar_x0 + 8, bar_y0 + 6, bar_x0 + fill_w - 8, bar_y0 + 6),
+                  fill=tuple(min(255, c + 90) for c in accent), width=2)
+    draw.text((CANVAS_W // 2, bar_y0 + bar_h + 22), f"CONFIDENCE: {confidence}%",
               font=small_font, fill=SILVER, anchor="ma")
 
-    # ---------------- Details Card ----------------
+    # ---------------- Details Card (3D depth) ----------------
     details_top = card_bottom + 24
     details_bottom = details_top + 520
     details_box = (40, details_top, CANVAS_W - 40, details_bottom)
-    _rounded_rect(draw, details_box, radius=28, fill=CARD_BG, outline=(50, 70, 65), width=2)
+    _drop_shadow(canvas, details_box, radius=28, offset=(0, 10), blur=20, opacity=120)
+    draw = ImageDraw.Draw(canvas)
+    _bevel_card(draw, details_box, radius=28, fill=CARD_BG,
+                top_light=(90, 130, 115), bottom_dark=(0, 0, 0), width=3)
+    draw.rounded_rectangle(details_box, radius=28, outline=(50, 70, 65), width=1)
 
     dx = 70
     dy = details_top + 20
@@ -372,8 +462,12 @@ def render_result_card(
     sentiment_box = (40, insight_top, 40 + col_w, insight_top + insight_h)
     volatility_box = (40 + col_w + col_gap, insight_top, CANVAS_W - 40, insight_top + insight_h)
 
-    # --- Market Sentiment card ---
-    _rounded_rect(draw, sentiment_box, radius=24, fill=CARD_BG, outline=accent, width=2)
+    # --- Market Sentiment card (3D depth) ---
+    _drop_shadow(canvas, sentiment_box, radius=24, offset=(0, 8), blur=16, opacity=110)
+    draw = ImageDraw.Draw(canvas)
+    _bevel_card(draw, sentiment_box, radius=24, fill=CARD_BG,
+                top_light=tuple(min(255, c + 60) for c in accent), bottom_dark=(0, 0, 0), width=3)
+    draw.rounded_rectangle(sentiment_box, radius=24, outline=accent, width=1)
     sc_cx = (sentiment_box[0] + sentiment_box[2]) / 2
     label_font_sm = _font(FONT_BOLD, 22)
     draw.text((sc_cx, sentiment_box[1] + 26), "MARKET SENTIMENT", font=label_font_sm, fill=accent, anchor="ma")
@@ -392,8 +486,12 @@ def render_result_card(
     filled_dots = max(1, min(6, round((confidence - 50) / 50 * 6)))
     _draw_dots(draw, sc_cx, sentiment_box[1] + 215, 6, filled_dots, accent)
 
-    # --- Volatility card ---
-    _rounded_rect(draw, volatility_box, radius=24, fill=CARD_BG, outline=NEON_GREEN, width=2)
+    # --- Volatility card (3D depth) ---
+    _drop_shadow(canvas, volatility_box, radius=24, offset=(0, 8), blur=16, opacity=110)
+    draw = ImageDraw.Draw(canvas)
+    _bevel_card(draw, volatility_box, radius=24, fill=CARD_BG,
+                top_light=(150, 255, 190), bottom_dark=(0, 0, 0), width=3)
+    draw.rounded_rectangle(volatility_box, radius=24, outline=NEON_GREEN, width=1)
     vc_cx = (volatility_box[0] + volatility_box[2]) / 2
     draw.text((vc_cx, volatility_box[1] + 26), "VOLATILITY", font=label_font_sm, fill=NEON_GREEN, anchor="ma")
 

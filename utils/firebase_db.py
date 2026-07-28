@@ -14,10 +14,14 @@ Setup:
 Collections used:
   users            { user_id, username, unlocked, timeframe, auto_broadcast,
                      selected_group, joined_at, plan, plan_expires_at,
-                     daily_usage_date, daily_usage_count }
+                     daily_usage_date, daily_usage_count, blocked, frozen,
+                     block_reason, total_signals, trial_used }
   groups           { chat_id, title, added_at }
   signal_log       { user_id, direction, confidence, timeframe, result,
                       created_at }
+  bot_config       { signal_sensitivity, min_confidence_floor,
+                      max_confidence_ceiling } — single "global" doc, tuned
+                      live from the admin panel's Signal Sensitivity Tuner.
   payments         { payment_id, user_id, username, plan, screenshot_url,
                       status ("pending"/"approved"/"rejected"), created_at,
                       reviewed_at }
@@ -80,11 +84,19 @@ def create_user(user_id, username):
             "auto_broadcast": False,
             "selected_group": None,
             "joined_at": _now_iso(),
-            "plan": None,               # None | "basic" | "pro" | "unlimited"
+            "plan": None,               # None | "trial" | "basic" | "pro" | "unlimited"
             "plan_expires_at": None,
             "daily_usage_date": None,
             "daily_usage_count": 0,
+            "blocked": False,
+            "frozen": False,
+            "block_reason": None,
+            "total_signals": 0,
+            "trial_used": False,
         })
+    else:
+        # Existing user re-triggering /start - keep username fresh for admin search
+        ref.update({"username": username})
 
 
 def unlock_user(user_id):
@@ -120,6 +132,82 @@ def get_auto_broadcast_settings(user_id):
     if not user:
         return False, None
     return bool(user.get("auto_broadcast")), user.get("selected_group")
+
+
+# ----------------------------------------------------------------------
+# MEMBER MODERATION — Block / Freeze
+# ----------------------------------------------------------------------
+# "Blocked"  -> user is fully cut off. Every handler (photo/text/menu)
+#               refuses them with a fixed message. Reversible via unblock.
+# "Frozen"   -> user's ACCOUNT is frozen: their active plan is suspended
+#               (they lose analysis access, same as no-plan) but their
+#               account/profile/stats are preserved and they're not
+#               blocked from opening the menu — used for "freeze the
+#               account" without a full ban. Reversible via unfreeze.
+def block_user(user_id, reason=None):
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({
+        "blocked": True,
+        "block_reason": reason or "No reason given",
+        "blocked_at": _now_iso(),
+    })
+
+
+def unblock_user(user_id):
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({
+        "blocked": False,
+        "block_reason": None,
+    })
+
+
+def is_blocked(user_id):
+    user = get_user(user_id)
+    return bool(user and user.get("blocked"))
+
+
+def freeze_user(user_id):
+    """Freezes the account: plan access is suspended immediately."""
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({
+        "frozen": True,
+        "frozen_at": _now_iso(),
+    })
+
+
+def unfreeze_user(user_id):
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({"frozen": False})
+
+
+def is_frozen(user_id):
+    user = get_user(user_id)
+    return bool(user and user.get("frozen"))
+
+
+def list_all_users(limit=200):
+    """Returns recent users for the admin member-management panel."""
+    db = init_firebase()
+    docs = db.collection("users").order_by(
+        "joined_at", direction=firestore.Query.DESCENDING
+    ).limit(limit).stream()
+    return [d.to_dict() for d in docs]
+
+
+def find_user_by_username(username):
+    """Case-sensitive exact match search (Telegram usernames are unique)."""
+    db = init_firebase()
+    clean = username.lstrip("@")
+    docs = db.collection("users").where("username", "==", clean).limit(5).stream()
+    return [d.to_dict() for d in docs]
+
+
+def increment_total_signals(user_id):
+    db = init_firebase()
+    ref = db.collection("users").document(str(user_id))
+    doc = ref.get()
+    current = doc.to_dict().get("total_signals", 0) if doc.exists else 0
+    ref.update({"total_signals": current + 1})
 
 
 # ----------------------------------------------------------------------
@@ -183,6 +271,7 @@ def get_win_loss_stats(user_id):
 # SUBSCRIPTION PLANS + DAILY USAGE LIMITS
 # ----------------------------------------------------------------------
 PLAN_LIMITS = {
+    "trial": {"label": "🎁 Free Trial (1 Day)", "daily_limit": 10},
     "basic": {"label": "Basic (Rs 500/mo)", "daily_limit": 15},
     "pro": {"label": "Pro (Rs 1000/mo)", "daily_limit": 35},
     "unlimited": {"label": "Unlimited (Rs 5000/mo)", "daily_limit": None},
@@ -215,6 +304,27 @@ def activate_plan(user_id, plan_id, days=30):
         "daily_usage_date": None,
         "daily_usage_count": 0,
     })
+
+
+def has_used_trial(user_id):
+    user = get_user(user_id)
+    return bool(user and user.get("trial_used"))
+
+
+def start_free_trial(user_id):
+    """
+    Activates the one-time free trial: 1 day validity, 10 total signal
+    analyses (enforced via the normal daily-limit mechanism, since the
+    whole trial only spans a single day anyway). Marks trial_used so the
+    same account can never re-claim it after it ends/is used up.
+    Returns False if the account already used its trial before.
+    """
+    if has_used_trial(user_id):
+        return False
+    activate_plan(user_id, "trial", days=1)
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({"trial_used": True})
+    return True
 
 
 def check_and_increment_usage(user_id):
@@ -304,3 +414,35 @@ def get_plan_qr_code(plan_id):
     db = init_firebase()
     doc = db.collection("plan_qr_codes").document(plan_id).get()
     return doc.to_dict().get("image_url") if doc.exists else None
+
+
+# ----------------------------------------------------------------------
+# BOT CONFIG (admin-tunable global settings, e.g. signal sensitivity)
+# ----------------------------------------------------------------------
+_DEFAULT_CONFIG = {
+    "signal_sensitivity": 1.0,   # 0.7 (conservative) .. 1.3 (aggressive)
+    "min_confidence_floor": 54,  # lowest displayed confidence %
+    "max_confidence_ceiling": 96,
+}
+
+
+def get_bot_config():
+    db = init_firebase()
+    doc = db.collection("bot_config").document("global").get()
+    cfg = dict(_DEFAULT_CONFIG)
+    if doc.exists:
+        cfg.update(doc.to_dict())
+    return cfg
+
+
+def set_bot_config_value(key, value):
+    db = init_firebase()
+    db.collection("bot_config").document("global").set({key: value}, merge=True)
+
+
+def adjust_signal_sensitivity(delta):
+    """Nudges sensitivity by delta, clamped to a safe [0.7, 1.3] range."""
+    cfg = get_bot_config()
+    new_val = round(max(0.7, min(1.3, cfg.get("signal_sensitivity", 1.0) + delta)), 2)
+    set_bot_config_value("signal_sensitivity", new_val)
+    return new_val

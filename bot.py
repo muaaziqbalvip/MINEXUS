@@ -39,7 +39,12 @@ from utils.firebase_db import (
     PLAN_LIMITS, get_active_plan, activate_plan, check_and_increment_usage,
     create_payment_request, get_payment, update_payment_status,
     list_pending_payments, set_plan_qr_code, get_plan_qr_code,
+    block_user, unblock_user, is_blocked, freeze_user, unfreeze_user,
+    is_frozen, list_all_users, find_user_by_username, increment_total_signals,
+    get_bot_config, adjust_signal_sensitivity,
+    start_free_trial, has_used_trial,
 )
+import asyncio
 
 # ----------------------------------------------------------------------
 # CONFIG
@@ -67,6 +72,38 @@ def is_admin(user_id):
     return user_id == ADMIN_USER_ID
 
 
+BLOCKED_MESSAGE = (
+    "🚫 *Access Restricted*\n\n"
+    "Your account has been blocked from using MI NEXUS.\n"
+    "If you believe this is a mistake, please contact the admin."
+)
+
+FROZEN_MESSAGE = (
+    "🧊 *Account Frozen*\n\n"
+    "Your account access has been temporarily frozen by the admin — "
+    "signal analysis is paused until it's unfrozen.\n"
+    "Please contact the admin for details."
+)
+
+
+async def _moderation_gate(update: Update, user_id: int) -> bool:
+    # Checks block/freeze status for a non-admin user and replies with the
+    # right message if they're gated. Returns True if the user should be
+    # stopped here (blocked/frozen), False if they're free to continue.
+    # Admins are always exempt.
+    if is_admin(user_id):
+        return False
+    if is_blocked(user_id):
+        target = update.callback_query.message if update.callback_query else update.message
+        await target.reply_text(BLOCKED_MESSAGE, parse_mode="Markdown")
+        return True
+    if is_frozen(user_id):
+        target = update.callback_query.message if update.callback_query else update.message
+        await target.reply_text(FROZEN_MESSAGE, parse_mode="Markdown")
+        return True
+    return False
+
+
 # ----------------------------------------------------------------------
 # HANDLERS
 # ----------------------------------------------------------------------
@@ -87,9 +124,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     create_user(user.id, user.username or user.first_name)
 
+    if await _moderation_gate(update, user.id):
+        return
+
     if is_unlocked(user.id):
         await send_main_menu(update, context)
     else:
+        await play_intro_animation(update, context)
         keyboard = [[InlineKeyboardButton("🚀 Create Account / Login", callback_data="account_login")]]
         await update.message.reply_text(
             "💎 *Welcome to MI NEXUS* 💎\n\n"
@@ -97,7 +138,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🕯️ 100+ candlestick patterns\n"
             "📊 RSI confluence scoring\n"
             "⬆️⬇️ Next-candle predictions\n"
-            "💎 Premium signal cards\n\n"
+            "💎 Premium signal cards\n"
+            "🎯 Live-tuned signal engine\n\n"
             "Tap below to get started — no password needed, your Telegram "
             "account *is* your login.",
             parse_mode="Markdown",
@@ -105,20 +147,73 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def play_intro_animation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Plays a short, cinematic boot-up sequence via progressive message
+    edits before the welcome card appears — gives MI NEXUS a 'pro engine
+    starting up' feel instead of dumping a static wall of text.
+    Uses only edit_text calls (no external video asset required), so it
+    works everywhere without extra files to ship.
+    """
+    frames = [
+        "▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️  0%\n_Initializing MI NEXUS..._",
+        "▪️▪️▫️▫️▫️▫️▫️▫️▫️▫️  20%\n_Loading pattern library (100+ formations)..._",
+        "▪️▪️▪️▪️▫️▫️▫️▫️▫️▫️  40%\n_Calibrating RSI confluence engine..._",
+        "▪️▪️▪️▪️▪️▪️▫️▫️▫️▫️  60%\n_Syncing prediction core..._",
+        "▪️▪️▪️▪️▪️▪️▪️▪️▫️▫️  80%\n_Polishing premium signal cards..._",
+        "▪️▪️▪️▪️▪️▪️▪️▪️▪️▪️  100%\n_🟢 MI NEXUS is online!_",
+    ]
+    try:
+        msg = await update.message.reply_text(f"⚡ *MI NEXUS BOOT SEQUENCE*\n\n{frames[0]}", parse_mode="Markdown")
+        for frame in frames[1:]:
+            await asyncio.sleep(0.45)
+            await msg.edit_text(f"⚡ *MI NEXUS BOOT SEQUENCE*\n\n{frame}", parse_mode="Markdown")
+        await asyncio.sleep(0.5)
+        await msg.delete()
+    except Exception as e:
+        logger.warning(f"Intro animation failed (non-critical): {e}")
+
+
+def build_main_menu_keyboard(user_id):
+    """Shared keyboard builder for the main menu — used by both the
+    /start / /menu flow and the 'Back to Menu' callback, so both stay
+    in sync automatically instead of drifting apart over time."""
+    keyboard = [
+        [
+            InlineKeyboardButton("⏱ Timeframe", callback_data="menu_timeframe"),
+            InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
+        ],
+        [
+            InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status"),
+            InlineKeyboardButton("🔥 Upgrade Plan", callback_data="menu_upgrade_shortcut"),
+        ],
+        [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
+    ]
+
+    if is_admin(user_id):
+        auto_bc, selected_group = get_auto_broadcast_settings(user_id)
+        bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
+        keyboard.insert(2, [
+            InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings"),
+        ])
+        keyboard.insert(3, [
+            InlineKeyboardButton("🎬 Session Start", callback_data="menu_session_start"),
+            InlineKeyboardButton("👥 Groups", callback_data="menu_groups"),
+        ])
+        keyboard.insert(4, [
+            InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_open"),
+        ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     tf = get_timeframe(user_id)
     tf_label = TF_LABELS.get(tf, "1 Min")
 
-    keyboard = [
-        [InlineKeyboardButton("⏱ Change Timeframe", callback_data="menu_timeframe")],
-        [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
-        [InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status")],
-        [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
-    ]
-
     text = (
-        "✅ *MI NEXUS UNLOCKED*\n\n"
+        "✨ *MI NEXUS — MAIN MENU* ✨\n\n"
         f"⏱ Timeframe: *{tf_label}*\n\n"
         "📸 Send me any trading chart screenshot and I'll analyze it:\n"
         "• 100+ candlestick pattern detection\n"
@@ -128,18 +223,10 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "_Just upload an image to get started!_"
     )
 
-    # Admin gets extra broadcast/session-start controls that regular
-    # clients don't see — clients only ever get their own personal signal.
     if is_admin(user_id):
-        auto_bc, selected_group = get_auto_broadcast_settings(user_id)
-        bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
-        keyboard.insert(2, [InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings")])
-        keyboard.insert(3, [InlineKeyboardButton("🎬 Post Session Start", callback_data="menu_session_start")])
-        keyboard.insert(4, [InlineKeyboardButton("👥 Active Groups", callback_data="menu_groups")])
-        keyboard.insert(5, [InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_open")])
-        text += f"\n\n🛠️ _Admin controls available below._"
+        text += "\n\n🛠️ _Admin controls available below._"
 
-    markup = InlineKeyboardMarkup(keyboard)
+    markup = build_main_menu_keyboard(user_id)
 
     if update.callback_query:
         await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
@@ -154,6 +241,39 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
     text = update.message.text.strip()
+
+    if await _moderation_gate(update, user.id):
+        return
+
+    # ---- Admin: cancel any pending admin text-input flow ----
+    if text == "/cancel" and is_admin(user.id):
+        context.user_data["awaiting_admin_broadcast_text"] = False
+        await update.message.reply_text("❌ Cancelled.")
+        return
+
+    # ---- Admin: awaiting broadcast text to send to all groups ----
+    if is_admin(user.id) and context.user_data.get("awaiting_admin_broadcast_text"):
+        context.user_data["awaiting_admin_broadcast_text"] = False
+        groups = list_groups()
+        if not groups:
+            await update.message.reply_text("⚠️ No connected groups to broadcast to yet.")
+            return
+
+        sent, failed = 0, 0
+        broadcast_text = f"📢 *MI NEXUS ANNOUNCEMENT*\n\n{text}"
+        for group_id, group_title in groups:
+            try:
+                await context.bot.send_message(chat_id=group_id, text=broadcast_text, parse_mode="Markdown")
+                sent += 1
+            except Exception as e:
+                logger.warning(f"Broadcast failed for group {group_id}: {e}")
+                failed += 1
+        await update.message.reply_text(
+            f"✅ *Broadcast sent!*\n\n📨 Delivered: *{sent}*\n"
+            f"{'⚠️ Failed: ' + str(failed) if failed else ''}",
+            parse_mode="Markdown"
+        )
+        return
 
     # ---- Awaiting pair name for a manual "Session Start" post ----
     if context.user_data.get("awaiting_session_pair"):
@@ -223,6 +343,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
+    if await _moderation_gate(update, user_id):
+        return
+
     # ---- Route plan selection ----
     if data.startswith("plan_"):
         plan_id = data.replace("plan_", "")
@@ -232,15 +355,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---- Account creation / login (replaces the old password flow) ----
     if data == "account_login":
         unlock_user(user_id)
-        await query.edit_message_text(
-            "✅ *Account Created!*\n\nWelcome to MI NEXUS — you're all set.",
-            parse_mode="Markdown"
-        )
+        if not has_used_trial(user_id):
+            keyboard = [[InlineKeyboardButton("🎁 Start My Free Trial (10 signals / 1 day)", callback_data="start_trial")]]
+            await query.edit_message_text(
+                "✅ *Account Created!*\n\n"
+                "Welcome to MI NEXUS — you're all set.\n\n"
+                "🎁 You have a *free trial* waiting: *10 free signal analyses, "
+                "valid for 1 day*. Tap below to activate it now, or use /plans "
+                "later to subscribe to a paid plan.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            await query.edit_message_text(
+                "✅ *Account Created!*\n\nWelcome to MI NEXUS — you're all set.",
+                parse_mode="Markdown"
+            )
         await send_main_menu(update, context)
         return
 
+    if data == "start_trial":
+        started = start_free_trial(user_id)
+        if started:
+            await query.edit_message_text(
+                "🎁 *Free Trial Activated!*\n\n"
+                "✅ 10 signal analyses\n"
+                "⏳ Valid for 1 day\n\n"
+                "Send a chart screenshot now to use your first signal!",
+                parse_mode="Markdown"
+            )
+        else:
+            await query.edit_message_text(
+                "⚠️ You've already used your free trial.\n\nUse /plans to subscribe to a paid plan.",
+                parse_mode="Markdown"
+            )
+        return
+
     # ---- Route admin panel callbacks ----
-    if data.startswith("admin_") or data.startswith("setqr_") or data.startswith("payapprove_") or data.startswith("payreject_"):
+    ADMIN_CALLBACK_PREFIXES = (
+        "admin_", "setqr_", "payapprove_", "payreject_",
+        "blockuser_", "unblockuser_", "freezeuser_", "unfreezeuser_",
+        "tuner_",
+    )
+    if data.startswith(ADMIN_CALLBACK_PREFIXES):
         await handle_admin_callback(query, context, data)
         return
 
@@ -364,22 +521,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "menu_back":
-        keyboard = [
-            [InlineKeyboardButton("⏱ Change Timeframe", callback_data="menu_timeframe")],
-            [InlineKeyboardButton("📊 My Stats", callback_data="menu_stats")],
-            [InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status")],
-            [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
-        ]
-        if is_admin(user_id):
-            auto_bc, _ = get_auto_broadcast_settings(user_id)
-            bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
-            keyboard.insert(2, [InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings")])
-            keyboard.insert(3, [InlineKeyboardButton("🎬 Post Session Start", callback_data="menu_session_start")])
-            keyboard.insert(4, [InlineKeyboardButton("👥 Active Groups", callback_data="menu_groups")])
-            keyboard.insert(5, [InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_open")])
         await query.edit_message_text(
-            "✅ *MI NEXUS Main Menu*", parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "✨ *MI NEXUS Main Menu*", parse_mode="Markdown",
+            reply_markup=build_main_menu_keyboard(user_id)
+        )
+
+    elif data == "menu_upgrade_shortcut":
+        await query.edit_message_text(
+            "💎 *Upgrade Your Plan*\n\nUse /plans in this chat to see available "
+            "plans and subscribe — you'll get a QR code to pay and can send "
+            "your payment screenshot right here.",
+            parse_mode="Markdown"
         )
 
     # ---------------- Plan Status (client-facing) ----------------
@@ -397,28 +549,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         else:
-            await query.edit_message_text(
-                "💳 *No Active Plan*\n\n"
-                "You don't have a subscription yet.\n"
-                "Use /plans to see available plans and subscribe.",
-                parse_mode="Markdown"
-            )
+            if not has_used_trial(user_id):
+                tkb = [[InlineKeyboardButton("🎁 Start Free Trial", callback_data="start_trial")]]
+                await query.edit_message_text(
+                    "💳 *No Active Plan*\n\n"
+                    "You don't have a subscription yet — try your *free trial* "
+                    "(10 signals, 1 day) or use /plans to subscribe.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(tkb)
+                )
+            else:
+                await query.edit_message_text(
+                    "💳 *No Active Plan*\n\n"
+                    "You don't have a subscription yet.\n"
+                    "Use /plans to see available plans and subscribe.",
+                    parse_mode="Markdown"
+                )
 
     # ---------------- Open Admin Panel from main menu ----------------
     elif data == "admin_open":
         if not is_admin(user_id):
             return
-        pending = list_pending_payments()
-        keyboard = [
-            [InlineKeyboardButton(f"💰 Pending Payments ({len(pending)})", callback_data="admin_pending")],
-            [InlineKeyboardButton("📷 Set Plan QR Codes", callback_data="admin_setqr")],
-            [InlineKeyboardButton("👥 Connected Groups", callback_data="menu_groups")],
-        ]
-        await query.edit_message_text(
-            "🛠️ *MI NEXUS Admin Panel*",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await show_admin_panel(query, context)
 
     # ---------------- Auto-Broadcast Settings ----------------
     elif data == "menu_broadcast_settings":
@@ -611,6 +763,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_qr_upload(update, context)
         return
 
+    if await _moderation_gate(update, user.id):
+        return
+
     # ---- Route: user sending a payment screenshot ----
     if context.user_data.get("awaiting_payment_screenshot"):
         await handle_payment_screenshot(update, context)
@@ -625,12 +780,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         allowed, remaining, plan_id = check_and_increment_usage(user.id)
         if not allowed:
             if plan_id is None:
-                await update.message.reply_text(
-                    "🔒 *No Active Plan*\n\n"
-                    "You need an active subscription to analyze charts.\n"
-                    "Use /plans to see available plans and subscribe.",
-                    parse_mode="Markdown"
-                )
+                if not has_used_trial(user.id):
+                    keyboard = [[InlineKeyboardButton("🎁 Start Free Trial (10 signals / 1 day)", callback_data="start_trial")]]
+                    await update.message.reply_text(
+                        "🔒 *No Active Plan*\n\n"
+                        "You need an active subscription to analyze charts — "
+                        "or activate your *free trial* below to try MI NEXUS "
+                        "right now (10 free signals, valid 1 day).\n\n"
+                        "Use /plans to see paid plans anytime.",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    await update.message.reply_text(
+                        "🔒 *No Active Plan*\n\n"
+                        "You need an active subscription to analyze charts.\n"
+                        "Use /plans to see available plans and subscribe.",
+                        parse_mode="Markdown"
+                    )
             else:
                 plan_label = PLAN_LIMITS.get(plan_id, {}).get("label", plan_id)
                 await update.message.reply_text(
@@ -675,7 +842,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         rsi_signal = detect_rsi_signal(local_path)
-        prediction = predict_next_candle(candles, rsi_signal=rsi_signal)
+        bot_cfg = get_bot_config()
+        prediction = predict_next_candle(
+            candles, rsi_signal=rsi_signal,
+            sensitivity=bot_cfg.get("signal_sensitivity", 1.0)
+        )
         tf_code = get_timeframe(user.id)
         tf_label = TF_LABELS.get(tf_code, "1 Min")
 
@@ -699,6 +870,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         log_id = log_signal(user.id, prediction["direction"], prediction["confidence"], tf_code)
+        increment_total_signals(user.id)
 
         is_up = prediction["direction"] == "UP"
         dir_emoji = "🟢⬆️" if is_up else "🔴⬇️"
@@ -825,7 +997,10 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         status_text = "You don't have an active plan yet.\n\n"
 
-    keyboard = [
+    keyboard = []
+    if not active_plan and not has_used_trial(user.id):
+        keyboard.append([InlineKeyboardButton("🎁 Free Trial — 10 signals / 1 day", callback_data="start_trial")])
+    keyboard += [
         [InlineKeyboardButton("💵 Basic — Rs 500/mo (15/day)", callback_data="plan_basic")],
         [InlineKeyboardButton("💰 Pro — Rs 1000/mo (35/day)", callback_data="plan_pro")],
         [InlineKeyboardButton("👑 Unlimited — Rs 5000/mo", callback_data="plan_unlimited")],
@@ -921,22 +1096,178 @@ async def handle_payment_screenshot(update: Update, context: ContextTypes.DEFAUL
 # ----------------------------------------------------------------------
 # ADMIN PANEL
 # ----------------------------------------------------------------------
+async def show_admin_panel(query_or_update, context):
+    """Renders the admin panel. Accepts either a CallbackQuery (edits the
+    message) or falls through to reply_text for the /admin command."""
+    pending = list_pending_payments()
+    cfg = get_bot_config()
+    sensitivity = cfg.get("signal_sensitivity", 1.0)
+    keyboard = [
+        [
+            InlineKeyboardButton(f"💰 Pending Payments ({len(pending)})", callback_data="admin_pending"),
+            InlineKeyboardButton("📷 Set Plan QR Codes", callback_data="admin_setqr"),
+        ],
+        [
+            InlineKeyboardButton("🚫 Manage Members", callback_data="admin_members"),
+            InlineKeyboardButton("👥 Connected Groups", callback_data="menu_groups"),
+        ],
+        [InlineKeyboardButton(f"🎚️ Signal Tuner ({sensitivity}x)", callback_data="admin_tuner")],
+        [InlineKeyboardButton("📢 Broadcast Text to All Groups", callback_data="admin_broadcast_text")],
+    ]
+    text = (
+        "🛠️ *MI NEXUS Admin Panel*\n\n"
+        f"💰 Pending payments: *{len(pending)}*\n"
+        f"🎚️ Signal sensitivity: *{sensitivity}x*\n\n"
+        "_Select a tool below._"
+    )
+    markup = InlineKeyboardMarkup(keyboard)
+
+    if hasattr(query_or_update, "edit_message_text"):
+        await query_or_update.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await query_or_update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+async def render_member_list(query, context, page=0):
+    """
+    Admin 'Manage Members' screen — lists recent users with inline
+    Block/Unblock and Freeze/Unfreeze buttons next to each one, paginated
+    5 at a time so the message stays readable.
+    """
+    all_users = list_all_users(limit=200)
+    page_size = 5
+    total_pages = max(1, (len(all_users) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    chunk = all_users[page * page_size: (page + 1) * page_size]
+
+    lines = [f"🚫 *Manage Members* (page {page + 1}/{total_pages})\n"]
+    keyboard = []
+
+    if not chunk:
+        lines.append("_No users found yet._")
+    for u in chunk:
+        uid = u.get("user_id")
+        uname = u.get("username") or "no-username"
+        status_bits = []
+        if u.get("blocked"):
+            status_bits.append("🚫 Blocked")
+        if u.get("frozen"):
+            status_bits.append("🧊 Frozen")
+        status = " | ".join(status_bits) if status_bits else "✅ Active"
+        plan = u.get("plan") or "No plan"
+        lines.append(f"👤 *{uname}* (`{uid}`)\n   {status} • Plan: {plan}")
+
+        row = []
+        if u.get("blocked"):
+            row.append(InlineKeyboardButton("✅ Unblock", callback_data=f"unblockuser_{uid}"))
+        else:
+            row.append(InlineKeyboardButton("🚫 Block", callback_data=f"blockuser_{uid}"))
+        if u.get("frozen"):
+            row.append(InlineKeyboardButton("🔥 Unfreeze", callback_data=f"unfreezeuser_{uid}"))
+        else:
+            row.append(InlineKeyboardButton("🧊 Freeze", callback_data=f"freezeuser_{uid}"))
+        keyboard.append(row)
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅ Prev", callback_data=f"memberpage_{page - 1}"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ➡", callback_data=f"memberpage_{page + 1}"))
+    if nav_row:
+        keyboard.append(nav_row)
+    keyboard.append([InlineKeyboardButton("⬅ Back to Admin Panel", callback_data="admin_back_panel")])
+
+    await query.edit_message_text(
+        "\n\n".join(lines), parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def render_signal_tuner(query, context):
+    """Admin 'Signal Sensitivity Tuner' — nudges the global multiplier
+    that scales every prediction's final score (see predict_next_candle's
+    `sensitivity` param), letting the admin dial the engine to be more
+    conservative or more aggressive without redeploying code."""
+    cfg = get_bot_config()
+    sensitivity = cfg.get("signal_sensitivity", 1.0)
+
+    if sensitivity <= 0.85:
+        mood = "🟦 Conservative — fewer high-confidence calls, more caution"
+    elif sensitivity >= 1.15:
+        mood = "🟥 Aggressive — bolder confidence swings"
+    else:
+        mood = "🟩 Balanced — standard calibration"
+
+    keyboard = [
+        [
+            InlineKeyboardButton("➖ Decrease", callback_data="tuner_down"),
+            InlineKeyboardButton("🔄 Reset (1.0x)", callback_data="tuner_reset"),
+            InlineKeyboardButton("➕ Increase", callback_data="tuner_up"),
+        ],
+        [InlineKeyboardButton("⬅ Back to Admin Panel", callback_data="admin_back_panel")],
+    ]
+    await query.edit_message_text(
+        f"🎚️ *Signal Sensitivity Tuner*\n\n"
+        f"Current: *{sensitivity}x*\n"
+        f"{mood}\n\n"
+        f"_Range: 0.7x (safest) — 1.3x (boldest). Applies to every new "
+        f"analysis instantly, no restart needed._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def finduser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/finduser <username> — quick admin lookup with block/freeze buttons,
+    for when scrolling the paginated member list would be slower."""
+    admin = update.effective_user
+    if not is_admin(admin.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: `/finduser <username>`", parse_mode="Markdown")
+        return
+
+    query_name = context.args[0]
+    matches = find_user_by_username(query_name)
+    if not matches:
+        await update.message.reply_text(f"❌ No user found matching `{query_name}`.", parse_mode="Markdown")
+        return
+
+    for u in matches:
+        uid = u.get("user_id")
+        status_bits = []
+        if u.get("blocked"):
+            status_bits.append("🚫 Blocked")
+        if u.get("frozen"):
+            status_bits.append("🧊 Frozen")
+        status = " | ".join(status_bits) if status_bits else "✅ Active"
+        plan = u.get("plan") or "No plan"
+
+        row = []
+        if u.get("blocked"):
+            row.append(InlineKeyboardButton("✅ Unblock", callback_data=f"unblockuser_{uid}"))
+        else:
+            row.append(InlineKeyboardButton("🚫 Block", callback_data=f"blockuser_{uid}"))
+        if u.get("frozen"):
+            row.append(InlineKeyboardButton("🔥 Unfreeze", callback_data=f"unfreezeuser_{uid}"))
+        else:
+            row.append(InlineKeyboardButton("🧊 Freeze", callback_data=f"freezeuser_{uid}"))
+
+        await update.message.reply_text(
+            f"👤 *{u.get('username')}* (`{uid}`)\n"
+            f"{status} • Plan: {plan}\n"
+            f"Total signals: {u.get('total_signals', 0)}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([row])
+        )
+
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not is_admin(user.id):
         return  # silently ignore for non-admins
-
-    pending = list_pending_payments()
-    keyboard = [
-        [InlineKeyboardButton(f"💰 Pending Payments ({len(pending)})", callback_data="admin_pending")],
-        [InlineKeyboardButton("📷 Set Plan QR Codes", callback_data="admin_setqr")],
-        [InlineKeyboardButton("👥 Connected Groups", callback_data="menu_groups")],
-    ]
-    await update.message.reply_text(
-        "🛠️ *MI NEXUS Admin Panel*",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await show_admin_panel(update, context)
 
 
 async def handle_admin_callback(query, context, data):
@@ -959,6 +1290,68 @@ async def handle_admin_callback(query, context, data):
             "\n\n_Use the Approve/Reject buttons sent with each payment notification._",
             parse_mode="Markdown"
         )
+
+    elif data == "admin_members":
+        await render_member_list(query, context, page=0)
+
+    elif data.startswith("memberpage_"):
+        page = int(data.replace("memberpage_", ""))
+        await render_member_list(query, context, page=page)
+
+    elif data.startswith("blockuser_"):
+        target_id = int(data.replace("blockuser_", ""))
+        block_user(target_id, reason="Blocked by admin")
+        await query.answer(f"🚫 Blocked user {target_id}", show_alert=True)
+        await render_member_list(query, context, page=0)
+
+    elif data.startswith("unblockuser_"):
+        target_id = int(data.replace("unblockuser_", ""))
+        unblock_user(target_id)
+        await query.answer(f"✅ Unblocked user {target_id}", show_alert=True)
+        await render_member_list(query, context, page=0)
+
+    elif data.startswith("freezeuser_"):
+        target_id = int(data.replace("freezeuser_", ""))
+        freeze_user(target_id)
+        await query.answer(f"🧊 Froze account {target_id}", show_alert=True)
+        await render_member_list(query, context, page=0)
+
+    elif data.startswith("unfreezeuser_"):
+        target_id = int(data.replace("unfreezeuser_", ""))
+        unfreeze_user(target_id)
+        await query.answer(f"🔥 Unfroze account {target_id}", show_alert=True)
+        await render_member_list(query, context, page=0)
+
+    elif data == "admin_tuner":
+        await render_signal_tuner(query, context)
+
+    elif data == "tuner_up":
+        new_val = adjust_signal_sensitivity(+0.05)
+        await query.answer(f"🎚️ Sensitivity: {new_val}x", show_alert=False)
+        await render_signal_tuner(query, context)
+
+    elif data == "tuner_down":
+        new_val = adjust_signal_sensitivity(-0.05)
+        await query.answer(f"🎚️ Sensitivity: {new_val}x", show_alert=False)
+        await render_signal_tuner(query, context)
+
+    elif data == "tuner_reset":
+        from utils.firebase_db import set_bot_config_value
+        set_bot_config_value("signal_sensitivity", 1.0)
+        await query.answer("🎚️ Reset to 1.0x", show_alert=False)
+        await render_signal_tuner(query, context)
+
+    elif data == "admin_broadcast_text":
+        context.user_data["awaiting_admin_broadcast_text"] = True
+        await query.edit_message_text(
+            "📢 *Broadcast Text to All Groups*\n\n"
+            "Type the message you want to send to *every connected group* now.\n"
+            "Send /cancel to abort.",
+            parse_mode="Markdown"
+        )
+
+    elif data == "admin_back_panel":
+        await show_admin_panel(query, context)
 
     elif data == "admin_setqr":
         keyboard = [
@@ -1059,6 +1452,7 @@ def main():
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("plans", plans_command))
     app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("finduser", finduser_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
