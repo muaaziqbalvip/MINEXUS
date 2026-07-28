@@ -173,131 +173,6 @@ def _glow_text(img, xy, text, font, fill, glow_color, glow_radius=8, anchor="la"
     d2.text(xy, text, font=font, fill=fill, anchor=anchor)
 
 
-def _draw_3d_candle_chart(canvas, candles, box, next_direction=None):
-    """
-    Redraws the detected candles as a clean, premium 'digital 3D' chart
-    instead of pasting the raw screenshot — gives each candle body a
-    vertical gradient, a soft drop-shadow, and a subtle glow so it reads
-    as a polished digital rendering rather than a phone screenshot.
-    Falls back gracefully (returns False) if there aren't enough candles.
-    """
-    if not candles or len(candles) < 2:
-        return False
-
-    bx0, by0, bx1, by1 = box
-    bw, bh = bx1 - bx0, by1 - by0
-
-    # Panel background (deep navy, slightly lighter than the outer card for depth)
-    panel = Image.new("RGBA", (int(bw), int(bh)), (8, 14, 18, 255))
-    pdraw = ImageDraw.Draw(panel)
-
-    # Subtle horizontal grid lines for a "trading terminal" feel
-    grid_color = (255, 255, 255, 14)
-    grid_layer = Image.new("RGBA", panel.size, (0, 0, 0, 0))
-    gdraw = ImageDraw.Draw(grid_layer)
-    for i in range(1, 5):
-        gy = int(bh * i / 5)
-        gdraw.line((0, gy, bw, gy), fill=grid_color, width=1)
-    panel.alpha_composite(grid_layer)
-
-    # Map candle data (in original screenshot pixel space) into panel space
-    all_tops = [c.wick_top for c in candles]
-    all_bottoms = [c.wick_bottom for c in candles]
-    data_top = min(all_tops)
-    data_bottom = max(all_bottoms)
-    data_range = max(1, data_bottom - data_top)
-
-    n = len(candles)
-    margin_x = bw * 0.04
-    usable_w = bw - margin_x * 2
-    slot_w = usable_w / n
-    candle_w = slot_w * 0.55
-
-    def map_y(y):
-        # padding top/bottom 8% so wicks don't touch panel edges
-        pad = bh * 0.08
-        return pad + (y - data_top) / data_range * (bh - pad * 2)
-
-    shadow_layer = Image.new("RGBA", panel.size, (0, 0, 0, 0))
-    sdraw = ImageDraw.Draw(shadow_layer)
-    glow_layer = Image.new("RGBA", panel.size, (0, 0, 0, 0))
-    gldraw = ImageDraw.Draw(glow_layer)
-    body_layer = Image.new("RGBA", panel.size, (0, 0, 0, 0))
-    bdraw = ImageDraw.Draw(body_layer)
-
-    last_candle_x = None
-    for i, c in enumerate(candles):
-        cx = margin_x + slot_w * i + slot_w / 2
-        wick_top_y = map_y(c.wick_top)
-        wick_bottom_y = map_y(c.wick_bottom)
-        body_top_y = map_y(c.body_top)
-        body_bottom_y = map_y(c.body_bottom)
-        if body_bottom_y - body_top_y < 3:
-            body_bottom_y = body_top_y + 3  # keep doji bodies visible
-
-        is_green = c.is_bullish()
-        base_color = NEON_GREEN if is_green else NEON_RED
-        dark_color = (0, 110, 40) if is_green else (140, 20, 20)
-
-        # drop shadow (offset dark blob behind the candle)
-        sdraw.rectangle(
-            (cx - candle_w / 2 + 3, body_top_y + 4, cx + candle_w / 2 + 3, body_bottom_y + 6),
-            fill=(0, 0, 0, 120)
-        )
-
-        # wick (thin glowing line)
-        gldraw.line((cx, wick_top_y, cx, wick_bottom_y), fill=base_color + (255,), width=3)
-
-        # body gradient (vertical): brighter at top, darker at bottom for a 3D "lit from above" feel
-        body_h = max(1, int(body_bottom_y - body_top_y))
-        grad = Image.new("RGBA", (max(1, int(candle_w)), body_h), (0, 0, 0, 0))
-        for row in range(body_h):
-            t = row / max(1, body_h - 1)
-            r = int(base_color[0] * (1 - t) + dark_color[0] * t)
-            g = int(base_color[1] * (1 - t) + dark_color[1] * t)
-            b = int(base_color[2] * (1 - t) + dark_color[2] * t)
-            ImageDraw.Draw(grad).line((0, row, int(candle_w), row), fill=(r, g, b, 255))
-        body_layer.paste(grad, (int(cx - candle_w / 2), int(body_top_y)), grad)
-
-        # thin bright highlight edge on the left side of the body (3D bevel)
-        bdraw.line((cx - candle_w / 2, body_top_y, cx - candle_w / 2, body_bottom_y),
-                    fill=(255, 255, 255, 90), width=2)
-
-        last_candle_x = cx
-
-    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(3))
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(4))
-
-    panel.alpha_composite(shadow_layer)
-    panel.alpha_composite(glow_layer)
-    panel.alpha_composite(body_layer)
-
-    # Predicted next-candle ghost marker (dashed outline at the far right)
-    if next_direction and last_candle_x is not None:
-        pdraw2 = ImageDraw.Draw(panel)
-        ghost_cx = min(bw - margin_x - slot_w * 0.3, last_candle_x + slot_w)
-        last_c = candles[-1]
-        last_mid = (map_y(last_c.body_top) + map_y(last_c.body_bottom)) / 2
-        ghost_h = bh * 0.12
-        is_up = next_direction == "UP"
-        ghost_color = NEON_GREEN if is_up else NEON_RED
-        ghost_top = last_mid - ghost_h if is_up else last_mid
-        ghost_bottom = last_mid if is_up else last_mid + ghost_h
-        for dash_y in range(int(ghost_top), int(ghost_bottom), 8):
-            pdraw2.line((ghost_cx - candle_w / 2, dash_y, ghost_cx - candle_w / 2, min(dash_y + 4, ghost_bottom)),
-                        fill=ghost_color + (200,), width=3)
-            pdraw2.line((ghost_cx + candle_w / 2, dash_y, ghost_cx + candle_w / 2, min(dash_y + 4, ghost_bottom)),
-                        fill=ghost_color + (200,), width=3)
-        arrow = "↑" if is_up else "↓"
-        pdraw2.text((ghost_cx, (ghost_top + ghost_bottom) / 2), arrow,
-                     font=_font(FONT_BOLD, 26), fill=ghost_color, anchor="mm")
-
-    # Rounded-corner mask + paste onto main canvas
-    mask = Image.new("L", panel.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw, bh), radius=24, fill=255)
-    canvas.paste(panel, (int(bx0), int(by0)), mask)
-    return True
-
 
 def _paste_chart(canvas, chart_bgr_path_or_img, box):
     """Pastes chart image (fit) into the given box with rounded mask."""
@@ -393,11 +268,7 @@ def render_result_card(
     _rounded_rect(draw, card_box, radius=32, fill=CARD_BG, outline=CARD_BORDER, width=3)
 
     chart_box = (70, card_top + 25, CANVAS_W - 70, card_bottom - 210)
-    drew_3d = False
-    if candles:
-        drew_3d = _draw_3d_candle_chart(canvas, candles, chart_box, next_direction=direction)
-    if not drew_3d:
-        _paste_chart(canvas, chart_image_path, chart_box)
+    _paste_chart(canvas, chart_image_path, chart_box)
     draw = ImageDraw.Draw(canvas)  # refresh draw handle after paste
 
     # Direction arrow marker overlay (top-right of chart box)

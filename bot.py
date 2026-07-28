@@ -641,8 +641,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             return
 
+    await context.bot.send_chat_action(chat_id=chat.id, action="upload_photo")
+
     processing_msg = await update.message.reply_text(
-        "⚡ *MI NEXUS is scanning the chart...*\n_Detecting candles, patterns & momentum_",
+        "⚡ *MI NEXUS Engine Starting...*\n░░░░░░░░░░ 0%",
         parse_mode="Markdown"
     )
 
@@ -651,6 +653,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = f"/tmp/mi_nexus_input_{user.id}_{update.message.message_id}.jpg"
         await photo_file.download_to_drive(local_path)
 
+        await processing_msg.edit_text(
+            "🔍 *Detecting candlesticks...*\n▓▓▓░░░░░░░ 30%",
+            parse_mode="Markdown"
+        )
         candles, cropped_chart, offset = detect_candles(local_path)
 
         if len(candles) < 3:
@@ -664,12 +670,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        await processing_msg.edit_text(
+            "🧮 *Matching 89 pattern signatures...*\n▓▓▓▓▓▓░░░░ 60%",
+            parse_mode="Markdown"
+        )
         rsi_signal = detect_rsi_signal(local_path)
         prediction = predict_next_candle(candles, rsi_signal=rsi_signal)
         tf_code = get_timeframe(user.id)
         tf_label = TF_LABELS.get(tf_code, "1 Min")
 
         pair_name = detect_pair_name(local_path) or "Chart Analysis"
+
+        await processing_msg.edit_text(
+            "🎨 *Rendering your signal card...*\n▓▓▓▓▓▓▓▓▓░ 90%",
+            parse_mode="Markdown"
+        )
 
         output_path = f"/tmp/mi_nexus_result_{user.id}_{update.message.message_id}.png"
         render_result_card(

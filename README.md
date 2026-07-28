@@ -18,15 +18,19 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v11 — Premium 3D Digital Chart Rendering)
+## Features (v12 — Fixed Chart Rendering + Live Progress Animation)
 
-- 🎨 **Redrawn 3D digital candle chart** — instead of pasting your raw
-  screenshot, the bot now redraws the detected candles itself as a clean
-  premium chart: vertical gradient bodies (brighter at top, darker at
-  bottom for a "lit from above" 3D look), glowing wicks, soft drop-shadows,
-  subtle grid lines, and a dashed ghost-candle marker showing the predicted
-  next direction. Falls back to the original screenshot automatically if
-  candle detection doesn't have enough data to redraw from.
+- 🛠️ **Chart rendering bug fixed**: an earlier attempt at redrawing candles
+  as a "3D digital chart" produced garbled, inaccurate candle shapes that
+  didn't match the real chart. That experimental renderer has been removed.
+  The bot now reliably pastes your **actual screenshot** into the signal
+  card — exactly the same candles you uploaded, styled with a clean
+  rounded-card border, so what you see always matches your real chart.
+- ⏳ **Live animated progress** while analyzing — since a result image can't
+  animate once sent, the bot now shows a live-updating progress message
+  with a percentage bar as it works (Starting → Detecting candles →
+  Matching patterns → Rendering → Done), plus Telegram's native "uploading
+  photo..." indicator, so it feels responsive during processing.
 
 - 🚀 **Password removed** — replaced with a one-tap "Create Account / Login"
   button. Your Telegram account is your identity; there's nothing to type
