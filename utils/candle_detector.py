@@ -1,7 +1,19 @@
 """
-MI NEXUS - Candle Detection Engine
+MI NEXUS - Candle Detection Engine (v2 - column-projection based)
 Detects candlesticks from a chart screenshot using pure OpenCV (no AI/API).
-Works by color-segmenting green/red (bullish/bearish) candle bodies and wicks.
+
+This version scans the chart column-by-column (like reading a barcode)
+instead of relying on contour-blob shape heuristics. This is far more
+robust against:
+  - candles whose wicks touch/merge with adjacent candles
+  - diagonal UI lines (trade-line overlays) that share the candle color
+  - small square candle bodies being mistaken for circular UI icons
+
+For each vertical column, we measure the height of green/red pixel runs.
+Real candle columns show a tall, mostly-solid colored run. A thin diagonal
+line only lights up 1-3px per column, which naturally falls below the
+minimum-height threshold and gets ignored - no fragile shape heuristics
+needed.
 """
 
 import cv2
@@ -41,16 +53,14 @@ class Candle:
 
 # ----------------------------------------------------------------------
 # COLOR RANGES - tuned for common broker platforms (Quotex/IQ-style themes)
-# Covers both bright-green/red and teal/crimson variants.
 # ----------------------------------------------------------------------
 GREEN_RANGES = [
-    ((35, 40, 40), (85, 255, 255)),   # standard green
-    ((70, 30, 40), (95, 255, 255)),   # teal-green (Quotex default up-candle)
+    ((35, 40, 40), (85, 255, 255)),
+    ((70, 30, 40), (95, 255, 255)),
 ]
 RED_RANGES = [
-    ((0, 40, 40), (10, 255, 255)),    # red low hue
-    ((160, 40, 40), (179, 255, 255)), # red high hue
-    ((340 // 2, 40, 40), (360 // 2, 255, 255)),  # crimson
+    ((0, 40, 40), (10, 255, 255)),
+    ((160, 40, 40), (179, 255, 255)),
 ]
 
 
@@ -63,75 +73,117 @@ def _mask_for_ranges(hsv, ranges):
 
 def crop_chart_area(img):
     """
-    Attempts to isolate the actual chart/candle area, cropping away
-    side panels, top bars, and bottom toolbars common in broker UIs.
-    Quotex-style layout: top strip has icons/timer, right strip has price
-    axis labels, bottom strip may have RSI/indicator panel.
+    Isolates the actual chart/candle area, cropping away side panels, top
+    bars, and bottom toolbars common in broker UIs.
     """
     h, w = img.shape[:2]
-    top = int(h * 0.10)      # skip top icon/timer row
-    bottom = int(h * 0.85)   # skip bottom indicator panel area
+    top = int(h * 0.10)
+    bottom = int(h * 0.80)   # exclude bottom RSI/indicator strip
     left = int(w * 0.01)
-    right = int(w * 0.88)    # avoid right-side price axis + price badge
+    right = int(w * 0.88)    # exclude right-side price axis/badge
     return img[top:bottom, left:right], (left, top)
 
 
-def _split_merged_blob(mask, x, y, w, h, reference_w):
+def _column_runs(mask):
     """
-    A contour wider than expected likely contains multiple touching candles.
-    Look at the column-wise pixel count (density profile) within the blob's
-    bounding box; local minima (valleys) mark boundaries between candles.
-    Falls back to even-width slicing if no clear valleys are found.
+    For each column, finds the longest contiguous vertical run of "on"
+    pixels and its (top, bottom) bounds. Returns a list of dicts per
+    column: {"height": int, "top": int, "bottom": int} or None if empty.
     """
-    roi = mask[y:y + h, x:x + w]
-    col_density = roi.sum(axis=0) / 255  # pixel count per column
-
-    n_slices = max(1, round(w / reference_w))
-    if n_slices <= 1 or w < 10:
-        return [(x, y, w, h)]
-
-    # Find valley points near expected slice boundaries
-    expected_slice_w = w / n_slices
-    boundaries = [0]
-    search_radius = max(2, int(expected_slice_w * 0.3))
-
-    for i in range(1, n_slices):
-        expected_pos = int(i * expected_slice_w)
-        lo = max(1, expected_pos - search_radius)
-        hi = min(w - 1, expected_pos + search_radius)
-        if lo >= hi:
-            boundaries.append(expected_pos)
+    h, w = mask.shape
+    results = [None] * w
+    for x in range(w):
+        col = mask[:, x]
+        on = np.nonzero(col)[0]
+        if len(on) == 0:
             continue
-        window = col_density[lo:hi]
-        if len(window) == 0:
-            boundaries.append(expected_pos)
-            continue
-        min_idx = lo + int(window.argmin())
-        boundaries.append(min_idx)
-    boundaries.append(w)
+        # find the longest contiguous run (handles small gaps/antialiasing)
+        gaps = np.where(np.diff(on) > 3)[0]
+        segments = np.split(on, gaps + 1) if len(gaps) else [on]
+        best = max(segments, key=len)
+        results[x] = {"height": int(best[-1] - best[0] + 1), "top": int(best[0]), "bottom": int(best[-1])}
+    return results
 
-    boxes = []
-    for i in range(len(boundaries) - 1):
-        bx0, bx1 = boundaries[i], boundaries[i + 1]
-        if bx1 <= bx0:
-            continue
-        # Recompute tight y-bounds within this slice for a cleaner body/wick fit
-        slice_roi = roi[:, bx0:bx1]
-        rows_with_pixels = slice_roi.sum(axis=1) > 0
-        if rows_with_pixels.any():
-            y_indices = rows_with_pixels.nonzero()[0]
-            sy = y + int(y_indices.min())
-            sh = int(y_indices.max() - y_indices.min()) + 1
+
+def _find_candle_columns(mask, min_height=10, max_center_drift=4):
+    """
+    Scans column runs and groups consecutive columns with a tall-enough,
+    POSITION-STABLE run into candle "slots". A real candle body/wick stays
+    at roughly the same vertical position across its width; a diagonal
+    trade-line overlay (same color family) instead drifts steadily up or
+    down column-by-column, so we reject columns whose run center has
+    drifted too far from the previous accepted column - this is what
+    correctly tells candles apart from diagonal line overlays without
+    needing fragile shape/fill-ratio heuristics.
+    """
+    runs = _column_runs(mask)
+    w = len(runs)
+
+    slots = []
+    current = None
+    prev_center = None
+
+    for x in range(w):
+        r = runs[x]
+        is_tall_enough = r is not None and r["height"] >= min_height
+        center = (r["top"] + r["bottom"]) / 2 if r else None
+
+        drifted_too_much = (
+            is_tall_enough and prev_center is not None
+            and abs(center - prev_center) > max_center_drift
+        )
+
+        if is_tall_enough and not drifted_too_much:
+            if current is None:
+                current = {"x_start": x, "x_end": x, "top": r["top"], "bottom": r["bottom"]}
+            else:
+                current["x_end"] = x
+                current["top"] = min(current["top"], r["top"])
+                current["bottom"] = max(current["bottom"], r["bottom"])
+            prev_center = center
         else:
-            sy, sh = y, h
-        boxes.append((x + bx0, sy, bx1 - bx0, sh))
+            if current is not None:
+                slots.append(current)
+                current = None
+            prev_center = center if is_tall_enough else None
+    if current is not None:
+        slots.append(current)
 
-    return boxes if boxes else [(x, y, w, h)]
+    return slots
+
+
+def _split_wide_slot(mask, slot, reference_width):
+    """
+    If a detected slot is much wider than a typical single candle, it's
+    likely 2+ candles whose wicks touch with no gap. Split it evenly into
+    the estimated number of candles and recompute each sub-slot's actual
+    top/bottom from the mask.
+    """
+    width = slot["x_end"] - slot["x_start"] + 1
+    n = max(1, round(width / reference_width))
+    if n <= 1:
+        return [slot]
+
+    slice_w = width / n
+    sub_slots = []
+    for i in range(n):
+        sx0 = slot["x_start"] + int(i * slice_w)
+        sx1 = slot["x_start"] + int((i + 1) * slice_w) - 1
+        sx1 = max(sx1, sx0)
+        region = mask[:, sx0:sx1 + 1]
+        rows = np.nonzero(region.sum(axis=1) > 0)[0]
+        if len(rows) == 0:
+            continue
+        sub_slots.append({
+            "x_start": sx0, "x_end": sx1,
+            "top": int(rows.min()), "bottom": int(rows.max()),
+        })
+    return sub_slots if sub_slots else [slot]
 
 
 def detect_candles(image_path):
     """
-    Main entry point. Returns (candles_list, debug_image, offset)
+    Main entry point. Returns (candles_list, debug_image, offset).
     candles_list is sorted left-to-right (chronological order).
     """
     img = cv2.imread(image_path)
@@ -144,141 +196,90 @@ def detect_candles(image_path):
     green_mask = _mask_for_ranges(hsv, GREEN_RANGES)
     red_mask = _mask_for_ranges(hsv, RED_RANGES)
 
-    # Clean noise
-    kernel = np.ones((3, 3), np.uint8)
+    # Light cleanup only - column-run approach handles most noise natively
+    kernel = np.ones((2, 2), np.uint8)
     green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)
     red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel)
 
-    candles = []
+    # A real candle's wick is a meaningful fraction of the visible chart
+    # height; using an absolute floor tuned to typical screenshot sizes
+    # filters out thin diagonal trade-lines (which only touch 1-3px/column)
+    # without needing fragile per-shape heuristics.
+    chart_h = cropped.shape[0]
+    min_height = max(8, int(chart_h * 0.035))
+    max_drift = max(6, int(chart_h * 0.025))
+
+    all_slots = []
     for color_name, mask in (("green", green_mask), ("red", red_mask)):
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        raw_rects = []
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            area = cv2.contourArea(cnt)
-            rect_area = w * h
-            if w < 2 or h < 4:
-                continue  # noise
-            if rect_area == 0:
-                continue
-            fill_ratio = area / rect_area
-            if fill_ratio < 0.55:
-                continue
-            aspect = w / h
-            if 0.75 <= aspect <= 1.35 and w < 40 and h < 40:
-                continue
-            raw_rects.append((x, y, w, h))
+        slots = _find_candle_columns(mask, min_height=min_height, max_center_drift=max_drift)
+        for s in slots:
+            s["color"] = color_name
+        all_slots.extend(slots)
 
-        if not raw_rects:
-            continue
-
-        # Estimate a "typical" single-candle body width from narrower rects
-        # (wicks are thin; bodies are wider). Use the smallest quartile of
-        # widths among wick-like thin shapes as a floor, and median overall.
-        widths = sorted(r[2] for r in raw_rects)
-        min_w = widths[0]
-        median_w = widths[len(widths) // 2]
-        reference_w = min_w if min_w >= 6 else median_w
-
-        for (x, y, w, h) in raw_rects:
-            if reference_w > 0 and w > reference_w * 1.6:
-                sub_boxes = _split_merged_blob(mask, x, y, w, h, reference_w)
-                for (sx, sy, sw, sh) in sub_boxes:
-                    candles.append({"x": sx, "y": sy, "w": sw, "h": sh, "color": color_name})
-            else:
-                candles.append({"x": x, "y": y, "w": w, "h": h, "color": color_name})
-
-    if not candles:
+    if not all_slots:
         return [], cropped, offset
 
-    # Group by x-position into candle columns (body + wick share x-center)
-    candles.sort(key=lambda c: c["x"])
-    grouped = _group_by_column(candles)
+    # Estimate a reference single-candle width from the narrower slots
+    # (helps decide which slots are actually 2+ merged candles)
+    widths = sorted(s["x_end"] - s["x_start"] + 1 for s in all_slots)
+    median_w = widths[len(widths) // 2]
 
+    final_slots = []
+    for s in all_slots:
+        width = s["x_end"] - s["x_start"] + 1
+        if median_w > 0 and width > median_w * 1.8:
+            mask = green_mask if s["color"] == "green" else red_mask
+            for sub in _split_wide_slot(mask, s, median_w):
+                sub["color"] = s["color"]
+                final_slots.append(sub)
+        else:
+            final_slots.append(s)
+
+    # Build Candle objects. For the wick vs body distinction we look at
+    # the actual pixel width used by the slot's peak run (a wick is
+    # narrower than the body at the same x-range), approximated here by
+    # using the full column-run bounds as both body and wick extent, then
+    # refining the body using the widest sub-run within the slot.
     candle_objs = []
-    for group in grouped:
-        candle = _build_candle_from_group(group)
-        if candle:
-            candle_objs.append(candle)
+    for s in final_slots:
+        x_start, x_end = s["x_start"], s["x_end"]
+        color = s["color"]
+        mask = green_mask if color == "green" else red_mask
+        width = x_end - x_start + 1
+        center_x = (x_start + x_end) / 2
+
+        # Body = rows where MOST columns in this slot are lit (wide part);
+        # Wick = rows where only a thin sliver of columns are lit (narrow part)
+        region = mask[:, x_start:x_end + 1]
+        row_counts = (region > 0).sum(axis=1)  # how many columns lit per row
+        if row_counts.max() == 0:
+            continue
+        body_threshold = max(1, row_counts.max() * 0.6)
+        body_rows = np.nonzero(row_counts >= body_threshold)[0]
+        any_rows = np.nonzero(row_counts > 0)[0]
+
+        wick_top, wick_bottom = int(any_rows.min()), int(any_rows.max())
+        if len(body_rows) > 0:
+            body_top, body_bottom = int(body_rows.min()), int(body_rows.max())
+        else:
+            body_top, body_bottom = wick_top, wick_bottom
+
+        candle_objs.append(Candle(
+            x=center_x,
+            body_top=body_top,
+            body_bottom=body_bottom,
+            wick_top=wick_top,
+            wick_bottom=wick_bottom,
+            color=color,
+            width=width,
+        ))
 
     candle_objs.sort(key=lambda c: c.x)
 
-    # Remove outlier columns whose width is wildly different from the
-    # median candle width (helps drop stray UI line/marker fragments)
+    # Drop extreme width outliers (stray fragments that survived splitting)
     if len(candle_objs) >= 4:
         widths = sorted(c.width for c in candle_objs)
-        median_w = widths[len(widths) // 2]
-        candle_objs = [
-            c for c in candle_objs
-            if median_w * 0.35 <= c.width <= median_w * 3.0
-        ]
+        med = widths[len(widths) // 2]
+        candle_objs = [c for c in candle_objs if med * 0.3 <= c.width <= med * 3.5]
 
     return candle_objs, cropped, offset
-
-
-def _group_by_column(candles, x_tolerance=4):
-    """Groups wick + body rectangles that belong to the same candle column."""
-    groups = []
-    used = [False] * len(candles)
-    candles_sorted = sorted(range(len(candles)), key=lambda i: candles[i]["x"])
-
-    for i in candles_sorted:
-        if used[i]:
-            continue
-        base = candles[i]
-        group = [base]
-        used[i] = True
-        center_x = base["x"] + base["w"] / 2
-
-        for j in candles_sorted:
-            if used[j]:
-                continue
-            other = candles[j]
-            other_center = other["x"] + other["w"] / 2
-            if abs(other_center - center_x) <= x_tolerance:
-                group.append(other)
-                used[j] = True
-        groups.append(group)
-
-    return groups
-
-
-def _build_candle_from_group(group):
-    """Combines body+wick rects in a column into one Candle object."""
-    if not group:
-        return None
-
-    # Separate body (wider rects) from wick (narrower rects) using a
-    # relative-width threshold rather than always trusting "widest = body",
-    # which is more robust when a candle has no visible wick at all.
-    widths = [c["w"] for c in group]
-    max_w = max(widths)
-    body_candidates = [c for c in group if c["w"] >= max_w * 0.6]
-    wick_candidates = [c for c in group if c["w"] < max_w * 0.6]
-
-    # Body = the union of all "wide" rects (usually just one)
-    body_top = min(c["y"] for c in body_candidates)
-    body_bottom = max(c["y"] + c["h"] for c in body_candidates)
-    body_rect = max(body_candidates, key=lambda c: c["w"])
-    color = body_rect["color"]
-
-    # Wick = extends from body edges to the furthest thin-rect extent;
-    # if no thin wick rects were found, wick == body (true Marubozu / no wick)
-    if wick_candidates:
-        wick_top = min(body_top, min(c["y"] for c in wick_candidates))
-        wick_bottom = max(body_bottom, max(c["y"] + c["h"] for c in wick_candidates))
-    else:
-        wick_top = body_top
-        wick_bottom = body_bottom
-
-    center_x = body_rect["x"] + body_rect["w"] / 2
-
-    return Candle(
-        x=center_x,
-        body_top=body_top,
-        body_bottom=body_bottom,
-        wick_top=wick_top,
-        wick_bottom=wick_bottom,
-        color=color,
-        width=body_rect["w"],
-    )

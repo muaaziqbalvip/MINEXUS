@@ -81,6 +81,7 @@ def create_user(user_id, username):
             "username": username,
             "unlocked": False,
             "timeframe": "1m",
+            "trade_duration": "1m",
             "auto_broadcast": False,
             "selected_group": None,
             "joined_at": _now_iso(),
@@ -117,6 +118,16 @@ def set_user_timeframe(user_id, tf_code):
 def get_timeframe(user_id):
     user = get_user(user_id)
     return user.get("timeframe", "1m") if user else "1m"
+
+
+def set_trade_duration(user_id, duration_code):
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({"trade_duration": duration_code})
+
+
+def get_trade_duration(user_id):
+    user = get_user(user_id)
+    return user.get("trade_duration", "1m") if user else "1m"
 
 
 def set_auto_broadcast(user_id, enabled, group_id=None):

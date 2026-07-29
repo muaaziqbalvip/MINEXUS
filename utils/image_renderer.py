@@ -67,18 +67,13 @@ def _drop_shadow(canvas, box, radius, offset=(0, 10), blur=22, opacity=140):
 
 def _bevel_card(draw, box, radius, fill, top_light, bottom_dark, width=3):
     """
-    Fakes a 3D beveled-glass edge: draws the card fill, then a bright
-    top-left partial arc/line and a darker bottom-right partial line so
-    the card reads as having physical depth rather than a flat outline.
+    Clean card fill + crisp rounded-corner outline. (Earlier versions tried
+    to fake a 3D bevel using PIL's arc() drawn across the ENTIRE card
+    bounding box, which stretched into ugly, distracting curved lines
+    across large cards instead of looking like a subtle corner highlight -
+    removed in favor of this simpler, cleaner look.)
     """
-    x0, y0, x1, y1 = box
-    _rounded_rect(draw, box, radius, fill=fill)
-    # bottom-right dark edge (shadow side)
-    draw.arc((x0, y0, x1, y1), start=20, end=160, fill=bottom_dark, width=width)
-    # top-left light edge (highlight side)
-    draw.arc((x0, y0, x1, y1), start=200, end=340, fill=top_light, width=width)
-    # crisp thin outline on top for definition
-    draw.rounded_rectangle(box, radius=radius, outline=top_light, width=1)
+    _rounded_rect(draw, box, radius, fill=fill, outline=top_light, width=width)
 
 
 def _glass_shine(canvas, box, radius, opacity=34):
@@ -236,6 +231,105 @@ def _glow_text(img, xy, text, font, fill, glow_color, glow_radius=8, anchor="la"
 
 
 
+def _glossy_3d_badge(canvas, box, radius, accent, glow=True):
+    """
+    Draws a small 'glossy button' badge: a vertical gradient fill (lighter
+    near the top, darker toward the bottom), a bright top highlight edge,
+    a dark bottom edge, and an optional soft outer glow — reads as a
+    raised, physical 3D button rather than a flat rectangle.
+    """
+    x0, y0, x1, y1 = box
+    w, h = int(x1 - x0), int(y1 - y0)
+    if w <= 0 or h <= 0:
+        return
+
+    if glow:
+        glow_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        gdraw = ImageDraw.Draw(glow_layer)
+        gdraw.rounded_rectangle(box, radius=radius, outline=accent + (200,), width=6)
+        glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(6))
+        canvas.alpha_composite(glow_layer)
+
+    # vertical gradient fill: dark base color rising to a lighter accent tint at top
+    grad = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    dark = (12, 16, 15)
+    for row in range(h):
+        t = row / max(1, h - 1)
+        r = int(dark[0] * t + accent[0] * (1 - t) * 0.22 + dark[0] * (1 - t) * 0.78)
+        g = int(dark[1] * t + accent[1] * (1 - t) * 0.22 + dark[1] * (1 - t) * 0.78)
+        b = int(dark[2] * t + accent[2] * (1 - t) * 0.22 + dark[2] * (1 - t) * 0.78)
+        ImageDraw.Draw(grad).line((0, row, w, row), fill=(r, g, b, 235))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w, h), radius=radius, fill=255)
+    canvas.paste(grad, (int(x0), int(y0)), mask)
+
+    draw = ImageDraw.Draw(canvas)
+    # crisp outline for definition
+    draw.rounded_rectangle(box, radius=radius, outline=accent, width=2)
+    return draw
+
+
+def _draw_shield_icon(draw, cx, cy, size, color):
+    """Small 3D-style shield/checkmark icon (used as a confidence badge accent)."""
+    pts = [
+        (cx, cy - size * 0.55),
+        (cx + size * 0.42, cy - size * 0.32),
+        (cx + size * 0.42, cy + size * 0.12),
+        (cx, cy + size * 0.55),
+        (cx - size * 0.42, cy + size * 0.12),
+        (cx - size * 0.42, cy - size * 0.32),
+    ]
+    draw.polygon(pts, outline=color, width=3)
+    # checkmark inside
+    draw.line((cx - size * 0.2, cy, cx - size * 0.04, cy + size * 0.18), fill=color, width=4)
+    draw.line((cx - size * 0.04, cy + size * 0.18, cx + size * 0.24, cy - size * 0.16), fill=color, width=4)
+
+
+def _draw_trend_arrow_graphic(canvas, box, color):
+    """Draws a small upward-trending line-chart-with-arrow graphic, used as
+    a decorative accent in the header (top-right), echoing a 'stocks going
+    up' visual motif."""
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    layer = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    ldraw = ImageDraw.Draw(layer)
+
+    # jagged upward line
+    pts = [
+        (0, h * 0.85), (w * 0.18, h * 0.65), (w * 0.34, h * 0.75),
+        (w * 0.52, h * 0.40), (w * 0.70, h * 0.50), (w * 0.88, h * 0.12),
+    ]
+    ldraw.line(pts, fill=color + (255,), width=5, joint="curve")
+
+    # arrowhead at the end
+    ax, ay = w * 0.88, h * 0.12
+    ldraw.polygon([(ax, ay), (ax - w * 0.14, ay), (ax, ay - h * 0.0)], fill=color + (255,))
+    ldraw.polygon([
+        (ax, ay - h * 0.02),
+        (ax - w * 0.16, ay + h * 0.06),
+        (ax - w * 0.04, ay + h * 0.18),
+    ], fill=color + (255,))
+
+    layer = layer.filter(ImageFilter.GaussianBlur(0.4))
+    canvas.alpha_composite(layer, (int(x0), int(y0)))
+
+
+def _draw_header_texture(canvas):
+    """Adds a very subtle circuit/grid texture across the top header band
+    for a high-tech premium feel, without being visually noisy."""
+    w = CANVAS_W
+    h = 260
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ldraw = ImageDraw.Draw(layer)
+    line_color = (60, 255, 140, 14)
+    step = 60
+    for x in range(0, w, step):
+        ldraw.line((x, 0, x, h), fill=line_color, width=1)
+    for y in range(0, h, step):
+        ldraw.line((0, y, w, y), fill=line_color, width=1)
+    canvas.alpha_composite(layer, (0, 0))
+
+
 def _paste_chart(canvas, chart_bgr_path_or_img, box):
     """Pastes chart image (fit) into the given box with rounded mask."""
     from PIL import Image as PILImage
@@ -278,12 +372,14 @@ def render_result_card(
     prediction,          # dict from predict_next_candle()
     pair_name="Chart Analysis",
     timeframe_label="1 MIN",
+    trade_duration_label=None,
     utc_offset_hours=5,
     logo_path=None,
     output_path="/tmp/mi_nexus_result.png",
-    candles=None,        # optional: Candle objects for the premium 3D digital chart redraw
+    candles=None,        # optional: Candle objects (currently unused for rendering, kept for API compatibility)
 ):
     canvas = _vertical_gradient(CANVAS_W, CANVAS_H, BG_TOP, BG_BOTTOM).convert("RGBA")
+    _draw_header_texture(canvas)
     draw = ImageDraw.Draw(canvas)
 
     direction = prediction["direction"]
@@ -293,42 +389,70 @@ def render_result_card(
     is_up = direction == "UP"
     accent = NEON_GREEN if is_up else NEON_RED
 
-    sub_font = _font(FONT_REG, 30)
+    sub_font = _font(FONT_REG, 28)
 
-    # Logo (optional)
-    y_cursor = 36
+    # ---------------- Header: big logo (left) + MI NEXUS wordmark (right) ----------------
+    header_top = 34
+    logo_size = 168
+    logo_x = 36
+
     if logo_path and os.path.exists(logo_path):
         logo = Image.open(logo_path).convert("RGBA")
-        logo_size = 100
-        logo = logo.resize((logo_size, logo_size), Image.LANCZOS)
-        canvas.alpha_composite(logo, ((CANVAS_W - logo_size) // 2, y_cursor))
-        y_cursor += logo_size + 8
 
-    header_font = _font(FONT_BOLD, 50)
-    _glow_text(canvas, (CANVAS_W // 2, y_cursor), "MI NEXUS", header_font,
-               fill=(255, 255, 255), glow_color=NEON_GREEN, glow_radius=6, anchor="ma")
-    y_cursor += 58
-    draw.text((CANVAS_W // 2, y_cursor), "ANALYZE  •  PREDICT  •  PROFIT",
-              font=sub_font, fill=SOFT_GREEN, anchor="ma")
-    y_cursor += 36
+        # Clean soft radial glow behind the logo (no visible ring edge -
+        # a smooth circular gradient that fades to fully transparent).
+        glow_pad = 46
+        glow_size = logo_size + glow_pad * 2
+        glow = Image.new("RGBA", (glow_size, glow_size), (0, 0, 0, 0))
+        gdraw = ImageDraw.Draw(glow)
+        max_r = glow_size / 2
+        steps = 40
+        for i in range(steps, 0, -1):
+            r = max_r * (i / steps)
+            alpha = int(70 * (1 - i / steps) ** 2)  # fades smoothly outward, softest at the edge
+            gdraw.ellipse(
+                (max_r - r, max_r - r, max_r + r, max_r + r),
+                fill=NEON_GREEN + (alpha,)
+            )
+        glow = glow.filter(ImageFilter.GaussianBlur(18))
+        canvas.alpha_composite(glow, (logo_x - glow_pad, header_top - glow_pad))
+
+        logo_resized = logo.resize((logo_size, logo_size), Image.LANCZOS)
+        canvas.alpha_composite(logo_resized, (logo_x, header_top))
+
+    text_x = logo_x + logo_size + 28
+    wordmark_font = _font(FONT_BOLD, 76)
+    _glow_text(canvas, (text_x, header_top + 14), "MI NEXUS", wordmark_font,
+               fill=(255, 255, 255), glow_color=NEON_GREEN, glow_radius=7, anchor="la")
+    draw = ImageDraw.Draw(canvas)
+    draw.text((text_x + 4, header_top + 100), "ANALYZE • PREDICT • PROFIT",
+              font=sub_font, fill=SOFT_GREEN, anchor="la")
+
+    # Decorative upward trend-arrow graphic, top-right of the header
+    _draw_trend_arrow_graphic(canvas, (CANVAS_W - 190, header_top + 10, CANVAS_W - 40, header_top + 90), NEON_GREEN)
+    draw = ImageDraw.Draw(canvas)
+
+    y_cursor = header_top + logo_size + 4
 
     pro_tag_font = _font(FONT_BOLD, 20)
     pro_tag_text = "⚙ V5 PRO ENGINE"
     pro_tag_w = draw.textlength(pro_tag_text, font=pro_tag_font)
     pro_tag_box = (CANVAS_W // 2 - pro_tag_w / 2 - 16, y_cursor,
                    CANVAS_W // 2 + pro_tag_w / 2 + 16, y_cursor + 32)
-    _rounded_rect(draw, pro_tag_box, radius=16, fill=(18, 26, 24), outline=GOLD, width=1)
+    _glossy_3d_badge(canvas, pro_tag_box, radius=16, accent=GOLD, glow=False)
+    draw = ImageDraw.Draw(canvas)
     draw.text((CANVAS_W // 2, y_cursor + 16), pro_tag_text, font=pro_tag_font, fill=GOLD, anchor="mm")
     y_cursor += 46
 
-    # Pair name badge
+    # Pair name badge — 3D glossy pill
     pair_font = _font(FONT_BOLD, 32)
     pair_text = f"★ {pair_name} ★"
     pair_w = draw.textlength(pair_text, font=pair_font)
     badge_pad = 24
     badge_box = (CANVAS_W // 2 - pair_w / 2 - badge_pad, y_cursor,
                  CANVAS_W // 2 + pair_w / 2 + badge_pad, y_cursor + 54)
-    _rounded_rect(draw, badge_box, radius=27, fill=(20, 30, 28), outline=SOFT_GREEN, width=2)
+    _glossy_3d_badge(canvas, badge_box, radius=27, accent=SOFT_GREEN)
+    draw = ImageDraw.Draw(canvas)
     draw.text((CANVAS_W // 2, y_cursor + 27), pair_text, font=pair_font, fill=(255, 255, 255), anchor="mm")
     y_cursor += 74
 
@@ -350,21 +474,27 @@ def render_result_card(
     _paste_chart(canvas, chart_image_path, chart_box)
     draw = ImageDraw.Draw(canvas)  # refresh draw handle after paste
 
-    # Direction arrow marker overlay (top-right of chart box)
+    # Direction arrow marker overlay (top-right of chart box) — 3D glossy badge
     arrow_symbol = "▲ UP" if is_up else "▼ DOWN"
     marker_box = (chart_box[2] - 240, chart_box[1] + 18, chart_box[2] - 18, chart_box[1] + 90)
-    _rounded_rect(draw, marker_box, radius=18, fill=(0, 0, 0, 190), outline=accent, width=3)
-    draw.text(((marker_box[0] + marker_box[2]) // 2, (marker_box[1] + marker_box[3]) // 2),
-               arrow_symbol, font=_font(FONT_BOLD, 34), fill=accent, anchor="mm")
+    _glossy_3d_badge(canvas, marker_box, radius=18, accent=accent)
+    draw = ImageDraw.Draw(canvas)
+    draw.text(((marker_box[0] + marker_box[2]) // 2, (marker_box[1] + marker_box[3]) // 2 - 2),
+               arrow_symbol, font=_font(FONT_BOLD, 34), fill=(255, 255, 255), anchor="mm")
 
-    # Strength badge (top-left of chart box)
+    # Strength badge (top-left of chart box) — 3D glossy badge
     strength_font = _font(FONT_BOLD, 24)
-    strength_text = f"● {strength}"
+    strength_text = f"{strength}"
     strength_w = draw.textlength(strength_text, font=strength_font)
-    sbadge_box = (chart_box[0] + 18, chart_box[1] + 18, chart_box[0] + 18 + strength_w + 30, chart_box[1] + 62)
-    _rounded_rect(draw, sbadge_box, radius=14, fill=(0, 0, 0, 190), outline=accent, width=2)
-    draw.text((sbadge_box[0] + 15, (sbadge_box[1] + sbadge_box[3]) // 2), strength_text,
-              font=strength_font, fill=accent, anchor="lm")
+    sbadge_box = (chart_box[0] + 18, chart_box[1] + 18, chart_box[0] + 56 + strength_w + 30, chart_box[1] + 62)
+    _glossy_3d_badge(canvas, sbadge_box, radius=14, accent=accent)
+    draw = ImageDraw.Draw(canvas)
+    dot_cx = sbadge_box[0] + 22
+    dot_cy = (sbadge_box[1] + sbadge_box[3]) / 2
+    # small glowing orb dot instead of a flat bullet character
+    draw.ellipse((dot_cx - 7, dot_cy - 7, dot_cx + 7, dot_cy + 7), fill=accent)
+    draw.ellipse((dot_cx - 3, dot_cy - 5, dot_cx + 1, dot_cy - 1), fill=(255, 255, 255, 200))
+    draw.text((dot_cx + 16, dot_cy), strength_text, font=strength_font, fill=(255, 255, 255), anchor="lm")
 
     # ---------------- Prediction Info Row (inside card) ----------------
     info_y = chart_box[3] + 20
@@ -392,12 +522,19 @@ def render_result_card(
     if fill_w > 16:
         draw.line((bar_x0 + 8, bar_y0 + 6, bar_x0 + fill_w - 8, bar_y0 + 6),
                   fill=tuple(min(255, c + 90) for c in accent), width=2)
-    draw.text((CANVAS_W // 2, bar_y0 + bar_h + 22), f"CONFIDENCE: {confidence}%",
-              font=small_font, fill=SILVER, anchor="ma")
+    conf_text = f"CONFIDENCE: {confidence}%"
+    conf_text_w = draw.textlength(conf_text, font=small_font)
+    shield_size = 22
+    total_w = shield_size + 10 + conf_text_w
+    shield_cx = CANVAS_W // 2 - total_w / 2 + shield_size / 2
+    shield_cy = bar_y0 + bar_h + 32
+    _draw_shield_icon(draw, shield_cx, shield_cy, shield_size, accent)
+    draw.text((shield_cx + shield_size / 2 + 10, shield_cy), conf_text,
+              font=small_font, fill=SILVER, anchor="lm")
 
-    # ---------------- Details Card (3D depth) ----------------
+    # ---------------- Details Card (3D depth) — two-column layout ----------------
     details_top = card_bottom + 24
-    details_bottom = details_top + 520
+    details_bottom = details_top + 340
     details_box = (40, details_top, CANVAS_W - 40, details_bottom)
     _drop_shadow(canvas, details_box, radius=28, offset=(0, 10), blur=20, opacity=120)
     draw = ImageDraw.Draw(canvas)
@@ -405,29 +542,36 @@ def render_result_card(
                 top_light=(90, 130, 115), bottom_dark=(0, 0, 0), width=3)
     draw.rounded_rectangle(details_box, radius=28, outline=(50, 70, 65), width=1)
 
-    dx = 70
-    dy = details_top + 20
-    row_font = _font(FONT_REG, 28)
-    row_font_b = _font(FONT_BOLD, 28)
+    col_split_x = 40 + (CANVAS_W - 80) * 0.48
+    left_x = 68
+    right_x = col_split_x + 30
+    dy_left = details_top + 24
+    dy_right = details_top + 24
+    row_font = _font(FONT_REG, 26)
+    row_font_b = _font(FONT_BOLD, 26)
 
-    draw.text((dx, dy), "Timeframe:", font=row_font, fill=SILVER)
-    draw.text((CANVAS_W - 70, dy), timeframe_label, font=row_font_b, fill=(255, 255, 255), anchor="ra")
-    dy += 46
+    # --- Left column: metadata rows ---
+    left_label_max_w = col_split_x - left_x - 10
+
+    def _left_row(label, value, value_color=(255, 255, 255)):
+        nonlocal dy_left
+        draw.text((left_x, dy_left), label, font=row_font, fill=SILVER)
+        dy_left += 32
+        draw.text((left_x, dy_left), value, font=row_font_b, fill=value_color)
+        dy_left += 46
+
+    _left_row("Timeframe:", timeframe_label)
+    if trade_duration_label:
+        _left_row("Trade Duration:", trade_duration_label, GOLD)
 
     tz = timezone(timedelta(hours=utc_offset_hours))
     now_str = datetime.now(tz).strftime("%H:%M:%S")
-    draw.text((dx, dy), f"Time (UTC{'+' if utc_offset_hours >= 0 else ''}{utc_offset_hours}):",
-              font=row_font, fill=SILVER)
-    draw.text((CANVAS_W - 70, dy), now_str, font=row_font_b, fill=(255, 255, 255), anchor="ra")
-    dy += 46
+    _left_row(f"Time (UTC{'+' if utc_offset_hours >= 0 else ''}{utc_offset_hours}):", now_str)
 
-    draw.text((dx, dy), "Trend Bias:", font=row_font, fill=SILVER)
     bias_val = prediction.get("trend_bias", 0)
     bias_label = "Bullish" if bias_val > 0.05 else ("Bearish" if bias_val < -0.05 else "Flat")
-    draw.text((CANVAS_W - 70, dy), bias_label, font=row_font_b, fill=(255, 255, 255), anchor="ra")
-    dy += 46
+    _left_row("Trend Bias:", bias_label, NEON_GREEN if bias_val > 0.05 else (NEON_RED if bias_val < -0.05 else SILVER))
 
-    draw.text((dx, dy), "Market Condition:", font=row_font, fill=SILVER)
     choppiness = prediction.get("choppiness", 0)
     if choppiness < 0.3:
         condition_label, condition_color = "Clean Trend", NEON_GREEN
@@ -435,23 +579,42 @@ def render_result_card(
         condition_label, condition_color = "Mixed", GOLD
     else:
         condition_label, condition_color = "Choppy", NEON_RED
-    draw.text((CANVAS_W - 70, dy), condition_label, font=row_font_b, fill=condition_color, anchor="ra")
-    dy += 52
+    dy_left += 6
+    draw.text((left_x, dy_left), "Market Condition:", font=row_font, fill=SILVER)
+    dy_left += 32
+    draw.text((left_x, dy_left), condition_label, font=row_font_b, fill=condition_color)
+    dy_left += 46
 
-    draw.text((dx, dy), "Patterns Detected:", font=row_font, fill=SILVER)
-    dy += 42
+    # Divider line between the two columns
+    draw.line((col_split_x, details_top + 20, col_split_x, details_bottom - 20),
+              fill=(50, 70, 65), width=2)
+
+    # --- Right column: Patterns Detected list ---
+    pat_header_font = _font(FONT_BOLD, 26)
+    draw.text((right_x, dy_right), "PATTERNS DETECTED:", font=pat_header_font, fill=SOFT_GREEN)
+    dy_right += 44
 
     breakdown = prediction.get("breakdown", [])
-    top_patterns = sorted(breakdown, key=lambda p: p["reliability"], reverse=True)[:5]
-    pat_font = _font(FONT_REG, 24)
+    top_patterns = sorted(breakdown, key=lambda p: p["reliability"], reverse=True)[:7]
+    pat_font = _font(FONT_REG, 22)
+    rel_font = _font(FONT_REG, 19)
+    right_col_w = (CANVAS_W - 40) - right_x - 20
     for p in top_patterns:
         sig_symbol = "▲" if p["signal"] == "bullish" else ("▼" if p["signal"] == "bearish" else "●")
         sig_color = NEON_GREEN if p["signal"] == "bullish" else (NEON_RED if p["signal"] == "bearish" else SILVER)
-        line = f"{sig_symbol} {p['name']}"
-        draw.text((dx + 10, dy), line, font=pat_font, fill=sig_color)
-        draw.text((CANVAS_W - 70, dy), f"{int(p['reliability'])}% reliability",
-                   font=_font(FONT_REG, 22), fill=SILVER, anchor="ra")
-        dy += 38
+        name = p["name"]
+        # Truncate long pattern names so they don't overflow the narrower column
+        max_chars = 22
+        if len(name) > max_chars:
+            name = name[:max_chars - 1] + "…"
+        line = f"{sig_symbol} {name}"
+        draw.text((right_x, dy_right), line, font=pat_font, fill=sig_color)
+        dy_right += 30
+        draw.text((right_x + 22, dy_right), f"{int(p['reliability'])}% reliability",
+                   font=rel_font, fill=SILVER)
+        dy_right += 34
+
+    dy = max(dy_left, dy_right)
 
     # ---------------- Two-Column Insight Cards: Market Sentiment + Volatility ----------------
     insight_top = details_bottom + 24

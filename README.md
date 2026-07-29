@@ -52,7 +52,34 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v12 — Fixed Chart Rendering + Live Progress Animation)
+## Features (v13 — Candle Detection Bug Fixes + Trade Duration Setting)
+
+- 🐛 **Real detection bug found and fixed**: the candle-detector's noise
+  filter was incorrectly rejecting genuine red (bearish) candles whenever
+  their bounding box had a low fill-ratio (e.g. two adjacent candles whose
+  wicks touch) — this could bias signals toward one color/direction more
+  than the real chart supports. The filter is now tuned to only reject
+  small, truly icon-shaped blobs, not real candle bodies.
+- 🐛 **Diagonal trade-line false positives fixed**: Quotex's red diagonal
+  "entry line" overlay was sometimes being misread as extra bearish candles.
+  Detection now checks that a colored region's vertical position stays
+  stable across adjacent columns (real candles do; a diagonal line drifts
+  steadily), rejecting the drifting line without needing fragile shape rules.
+- ⚠️ **Known remaining limitation (documented honestly)**: when two candles
+  of the *same* color sit perfectly edge-to-edge with zero visual gap,
+  telling them apart from pixels alone is a genuinely hard computer-vision
+  problem and won't always be perfect. When in doubt, zoom in more before
+  screenshotting so candles have a visible gap between them.
+- ⏳ **New: Trade Duration setting** — separate from chart Timeframe (which
+  candle interval you're reading), Trade Duration is how long *you* plan to
+  hold the trade once placed. Set it from the menu (⏳ Trade Duration) and
+  it's shown on every signal card and caption alongside the timeframe.
+- 🎯 **Important reminder about accuracy**: no chart-pattern analysis tool —
+  this one included — can guarantee trade outcomes. Confidence % reflects
+  pattern/indicator agreement strength, not a win probability. Short
+  1-5 minute OTC-style trades are especially noisy; treat every signal as
+  one input, not a certainty, and always manage risk accordingly.
+
 
 - 🛠️ **Chart rendering bug fixed**: an earlier attempt at redrawing candles
   as a "3D digital chart" produced garbled, inaccurate candle shapes that

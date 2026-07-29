@@ -33,7 +33,8 @@ from utils.sticker_generator import (
 from utils.imgbb_uploader import upload_image
 from utils.firebase_db import (
     init_firebase, get_user, create_user, unlock_user, is_unlocked,
-    set_user_timeframe, get_timeframe, register_group, list_groups,
+    set_user_timeframe, get_timeframe, set_trade_duration, get_trade_duration,
+    register_group, list_groups,
     get_group_title, log_signal, set_signal_result, get_win_loss_stats,
     set_auto_broadcast, get_auto_broadcast_settings,
     PLAN_LIMITS, get_active_plan, activate_plan, check_and_increment_usage,
@@ -59,6 +60,16 @@ TIMEFRAME_OPTIONS = [
     ("5 Min", "5m"), ("15 Min", "15m"), ("30 Min", "30m"), ("1 Hour", "1h"),
 ]
 
+# Trade Duration = how long the user plans to hold the trade once placed.
+# Separate from chart Timeframe (which candle interval is being analyzed) -
+# a user might read a 1-min chart but place a 5-min duration trade.
+TRADE_DURATION_OPTIONS = [
+    ("5 Sec", "5s"), ("15 Sec", "15s"), ("30 Sec", "30s"),
+    ("1 Min", "1m"), ("2 Min", "2m"), ("3 Min", "3m"),
+    ("5 Min", "5m"), ("10 Min", "10m"), ("15 Min", "15m"),
+    ("30 Min", "30m"), ("1 Hour", "1h"),
+]
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -66,6 +77,7 @@ logging.basicConfig(
 logger = logging.getLogger("MI_NEXUS")
 
 TF_LABELS = {code: label for label, code in TIMEFRAME_OPTIONS}
+DURATION_LABELS = {code: label for label, code in TRADE_DURATION_OPTIONS}
 
 
 def is_admin(user_id):
@@ -181,12 +193,13 @@ def build_main_menu_keyboard(user_id):
     keyboard = [
         [
             InlineKeyboardButton("⏱ Timeframe", callback_data="menu_timeframe"),
-            InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
+            InlineKeyboardButton("⏳ Trade Duration", callback_data="menu_trade_duration"),
         ],
         [
+            InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
             InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status"),
-            InlineKeyboardButton("🔥 Upgrade Plan", callback_data="menu_upgrade_shortcut"),
         ],
+        [InlineKeyboardButton("🔥 Upgrade Plan", callback_data="menu_upgrade_shortcut")],
         [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
     ]
 
@@ -211,10 +224,13 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     tf = get_timeframe(user_id)
     tf_label = TF_LABELS.get(tf, "1 Min")
+    dur = get_trade_duration(user_id)
+    dur_label = DURATION_LABELS.get(dur, "1 Min")
 
     text = (
         "✨ *MI NEXUS — MAIN MENU* ✨\n\n"
-        f"⏱ Timeframe: *{tf_label}*\n\n"
+        f"⏱ Chart Timeframe: *{tf_label}*\n"
+        f"⏳ Trade Duration: *{dur_label}*\n\n"
         "📸 Send me any trading chart screenshot and I'll analyze it:\n"
         "• 100+ candlestick pattern detection\n"
         "• RSI confluence + trend momentum scoring\n"
@@ -434,6 +450,46 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         label = TF_LABELS.get(code, code)
         await query.edit_message_text(
             f"✅ Timeframe set to *{label}*\n\nNow send a chart screenshot to analyze!",
+            parse_mode="Markdown"
+        )
+
+    elif data == "menu_trade_duration":
+        keyboard = []
+        row = []
+        for i, (label, code) in enumerate(TRADE_DURATION_OPTIONS):
+            row.append(InlineKeyboardButton(label, callback_data=f"dur_{code}"))
+            if len(row) == 3:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_back")])
+
+        current = get_trade_duration(user_id)
+        current_label = DURATION_LABELS.get(current, "1 Min")
+
+        await query.edit_message_text(
+            "⏳ *SET YOUR TRADE DURATION*\n\n"
+            f"Currently: *{current_label}*\n\n"
+            "This is how long *you* plan to hold each trade once you "
+            "place it — it gets shown on every signal card so you always "
+            "know what duration the signal was meant for.\n\n"
+            "_Tip: shorter durations (5s–1m) move faster and can be "
+            "noisier; longer durations (5m+) tend to follow trends more "
+            "smoothly._\n\n"
+            "👇 Choose your trade duration:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("dur_"):
+        code = data.replace("dur_", "")
+        set_trade_duration(user_id, code)
+        label = DURATION_LABELS.get(code, code)
+        await query.edit_message_text(
+            f"✅ *Trade Duration set to {label}*\n\n"
+            f"Every signal card will now show this as your planned hold time.\n\n"
+            f"Send a chart screenshot whenever you're ready!",
             parse_mode="Markdown"
         )
 
@@ -849,6 +905,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         tf_code = get_timeframe(user.id)
         tf_label = TF_LABELS.get(tf_code, "1 Min")
+        dur_code = get_trade_duration(user.id)
+        dur_label = DURATION_LABELS.get(dur_code, "1 Min")
 
         pair_name = detect_pair_name(local_path) or "Chart Analysis"
 
@@ -863,6 +921,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prediction=prediction,
             pair_name=pair_name,
             timeframe_label=tf_label,
+            trade_duration_label=dur_label,
             utc_offset_hours=5,
             logo_path=LOGO_PATH if os.path.exists(LOGO_PATH) else None,
             output_path=output_path,
@@ -902,6 +961,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{dir_emoji} Direction: *{prediction['direction']}*\n"
             f"📊 Confidence: *{prediction['confidence']}%* {strength_emoji}\n"
             f"⏱ Timeframe: *{tf_label}*\n"
+            f"⏳ Trade Duration: *{dur_label}*\n"
             f"🕯️ Key Pattern: *{top_pattern}* ({pattern_count} total detected)\n"
             f"📈 Market Condition: *{condition_text}*\n"
             f"{rsi_line}"
