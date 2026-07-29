@@ -44,6 +44,7 @@ from utils.firebase_db import (
     is_frozen, list_all_users, find_user_by_username, increment_total_signals,
     get_bot_config, adjust_signal_sensitivity,
     start_free_trial, has_used_trial,
+    get_quotex_tracking_link, get_quotex_deposit_status,
 )
 import asyncio
 
@@ -200,6 +201,7 @@ def build_main_menu_keyboard(user_id):
             InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status"),
         ],
         [InlineKeyboardButton("🔥 Upgrade Plan", callback_data="menu_upgrade_shortcut")],
+        [InlineKeyboardButton("🔗 Get Free Quotex Link", callback_data="menu_quotex_link")],
         [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
     ]
 
@@ -587,6 +589,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💎 *Upgrade Your Plan*\n\nUse /plans in this chat to see available "
             "plans and subscribe — you'll get a QR code to pay and can send "
             "your payment screenshot right here.",
+            parse_mode="Markdown"
+        )
+
+    elif data == "menu_quotex_link":
+        await query.edit_message_text(
+            "🔗 Use /invite to get your personal Quotex link and see your "
+            "current deposit-tier status.",
             parse_mode="Markdown"
         )
 
@@ -1045,6 +1054,48 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ----------------------------------------------------------------------
 # SUBSCRIPTION PLANS + PAYMENT FLOW
 # ----------------------------------------------------------------------
+async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Gives the user their personal Quotex tracking link (with their
+    Telegram ID embedded as the click/sub ID) plus their current deposit
+    status and the resulting daily analysis limit.
+    """
+    user = update.effective_user
+    if update.effective_chat.type in ("group", "supergroup"):
+        return
+
+    link = get_quotex_tracking_link(user.id)
+    total_deposit, daily_limit = get_quotex_deposit_status(user.id)
+
+    tiers_text = (
+        "💵 *$10 deposited* → 18 analyses/day\n"
+        "💰 *$20 deposited* → 40 analyses/day\n"
+        "🔥 *$50 deposited* → 120 analyses/day\n"
+        "👑 *$100 deposited* → 300 analyses/day"
+    )
+
+    status_text = ""
+    if total_deposit and total_deposit > 0:
+        status_text = (
+            f"\n\n📊 *Your Verified Deposits:* ${total_deposit:.2f}\n"
+            f"🎯 *Your Daily Limit:* {daily_limit if daily_limit else 'Not yet tier-qualified'}"
+        )
+
+    await update.message.reply_text(
+        f"🔗 *Your Personal Quotex Link*\n\n"
+        f"`{link}`\n\n"
+        f"Create your Quotex account through this link, then deposit — "
+        f"your daily analysis limit unlocks automatically once your "
+        f"deposit is verified (usually within a few minutes).\n\n"
+        f"*Deposit Tiers:*\n{tiers_text}"
+        f"{status_text}\n\n"
+        f"⚠️ _Only trade with money you can afford to lose. This bot's "
+        f"signals are not guaranteed — see /menu → 📖 How To Use for "
+        f"responsible trading guidance._",
+        parse_mode="Markdown"
+    )
+
+
 async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if update.effective_chat.type in ("group", "supergroup"):
@@ -1511,6 +1562,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("plans", plans_command))
+    app.add_handler(CommandHandler("invite", invite_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("finduser", finduser_command))
     app.add_handler(CallbackQueryHandler(button_handler))

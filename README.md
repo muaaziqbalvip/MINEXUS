@@ -52,7 +52,28 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v13 — Candle Detection Bug Fixes + Trade Duration Setting)
+## Features (v14 — Quotex Affiliate Deposit-Tier Unlocking)
+
+- 🔗 **New `/invite` command** — gives each user their personal Quotex
+  tracking link (their Telegram ID embedded as the click/sub ID) plus
+  their current verified-deposit status.
+- 💰 **Automatic deposit-tier unlocking** via a separate small Vercel
+  project (`/quotex_postback` folder, deploy separately from the bot) that
+  receives Quotex's affiliate postback notifications and updates the
+  user's daily analysis limit in the same Firestore database the bot uses:
+  | Verified Deposit | Daily Analyses |
+  |---|---|
+  | $10 | 18 |
+  | $20 | 40 |
+  | $50 | 120 |
+  | $100 | 300 |
+  This runs **alongside**, not instead of, the existing manual QR-code
+  paid plans — whichever gives the user the higher daily limit applies.
+- ⚠️ **Important**: this only tracks *verified deposits*, confirmed by
+  Quotex itself via their postback system — it cannot verify or influence
+  trading outcomes in any way. See `/quotex_postback/README.md` for full
+  setup steps and honest caveats before relying on this.
+
 
 - 🐛 **Real detection bug found and fixed**: the candle-detector's noise
   filter was incorrectly rejecting genuine red (bearish) candles whenever

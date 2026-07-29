@@ -340,35 +340,67 @@ def start_free_trial(user_id):
 
 def check_and_increment_usage(user_id):
     """
-    Checks whether the user can run another analysis today under their
-    plan's daily limit, and increments their usage counter if allowed.
+    Checks whether the user can run another analysis today, and increments
+    their usage counter if allowed. Two independent unlock paths are
+    supported and the HIGHER limit of the two wins when both are present:
+      1. A manually-approved paid plan (Basic/Pro/Unlimited via QR payment)
+      2. A Quotex deposit tier (see utils/quotex_tiers.py) - unlocked
+         automatically via the Quotex affiliate postback once a referred
+         user's verified deposit total crosses a threshold.
     Returns (allowed: bool, remaining: int|None, plan_id: str|None).
     remaining is None for unlimited plans.
     """
     db = init_firebase()
     plan_id = get_active_plan(user_id)
+    plan_limit = PLAN_LIMITS.get(plan_id, {}).get("daily_limit") if plan_id else None
+    plan_is_unlimited = plan_id and plan_limit is None
 
-    if not plan_id:
-        return False, 0, None  # no active plan
+    user = get_user(user_id) or {}
+    quotex_limit = user.get("quotex_daily_limit")
 
-    limit = PLAN_LIMITS.get(plan_id, {}).get("daily_limit")
-    if limit is None:
-        return True, None, plan_id  # unlimited plan
+    if plan_is_unlimited:
+        return True, None, plan_id
 
-    user = get_user(user_id)
+    # Determine the effective limit: unlimited beats any number, otherwise
+    # take whichever numeric limit (paid plan vs Quotex tier) is higher.
+    candidates = [v for v in (plan_limit, quotex_limit) if v is not None]
+    if not candidates:
+        return False, 0, plan_id  # no active plan and no qualifying deposit
+
+    effective_limit = max(candidates)
+    effective_source = plan_id if (plan_limit == effective_limit and plan_limit is not None) else "quotex_tier"
+
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     usage_date = user.get("daily_usage_date")
     usage_count = user.get("daily_usage_count", 0) if usage_date == today else 0
 
-    if usage_count >= limit:
-        return False, 0, plan_id
+    if usage_count >= effective_limit:
+        return False, 0, effective_source
 
     new_count = usage_count + 1
     db.collection("users").document(str(user_id)).update({
         "daily_usage_date": today,
         "daily_usage_count": new_count,
     })
-    return True, limit - new_count, plan_id
+    return True, effective_limit - new_count, effective_source
+
+
+def get_quotex_tracking_link(user_id, base_link="https://broker-qx.pro/sign-up/"):
+    """
+    Builds a per-user Quotex tracking link with the Telegram user_id
+    embedded as the sub/click ID, so the postback endpoint can match a
+    deposit event back to this specific user.
+    NOTE: confirm the exact query-param name Quotex expects for sub-ID
+    tracking in your Affiliate Center's link-builder (commonly `lid` or
+    a custom sub-ID param) and adjust here if it differs.
+    """
+    return f"{base_link}?lid={user_id}"
+
+
+def get_quotex_deposit_status(user_id):
+    """Returns (total_deposit, daily_limit) for display in the bot."""
+    user = get_user(user_id) or {}
+    return user.get("quotex_total_deposit", 0), user.get("quotex_daily_limit")
 
 
 # ----------------------------------------------------------------------
