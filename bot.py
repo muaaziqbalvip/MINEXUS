@@ -68,6 +68,15 @@ INTRO_VIDEOS = [
 # an analysis - keeps it feeling premium without spamming every single time.
 VIDEO_SHOW_CHANCE = 0.35
 
+# Short Islamic openings shown before each analysis session, rotated for
+# variety. Kept brief and reverent - a blessing before starting, not a
+# claim that it changes trading outcomes.
+SESSION_DUAS = [
+    "🕌 *بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيْمِ*\n_In the name of Allah, the Most Gracious, the Most Merciful._",
+    "🕌 *بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيْمِ*\n_اللّٰهُمَّ صَلِّ عَلَىٰ مُحَمَّدٍ وَعَلَىٰ آلِ مُحَمَّدٍ_\n_O Allah, send blessings upon Muhammad ﷺ and his family._",
+    "🕌 *بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيْمِ*\n_رَبِّ زِدْنِي عِلْمًا وَرِزْقًا حَلَالًا_\n_My Lord, increase me in knowledge and lawful provision._",
+]
+
 TIMEFRAME_OPTIONS = [
     ("5 Sec", "5s"), ("15 Sec", "15s"), ("30 Sec", "30s"),
     ("1 Min", "1m"), ("2 Min", "2m"), ("3 Min", "3m"),
@@ -176,6 +185,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if is_unlocked(user.id):
+        # Returning users still get a chance to see the visual branding
+        # when they explicitly type /start (not on every /menu click) -
+        # keeps things fresh without repeating on every single interaction.
+        await maybe_send_intro_video(update, context)
         await send_main_menu(update, context)
     else:
         await play_intro_animation(update, context)
@@ -402,6 +415,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         session_caption = (
+            f"{random.choice(SESSION_DUAS)}\n\n"
             f"🎬 *MI NEXUS — TRADING SESSION STARTED* 🎬\n\n"
             f"💹 Pair: *{pair_name}*\n"
             f"⏱ Timeframe: *{tf_label}*\n\n"
@@ -693,11 +707,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status_text = f"\n\n📊 Your verified deposit: *${total_deposit:.2f}* → *{quotex_limit or 0} analyses/day*"
 
         await query.edit_message_text(
-            f"🔗 *Your Personal Quotex Link*\n\n`{link}`\n\n"
-            f"Sign up through this link and deposit — your daily analysis "
-            f"limit unlocks automatically:\n{tiers_text}"
+            f"🔗 *Your Personal Quotex Link*\n\n"
+            f"Tap the button below to open it and sign up — your daily "
+            f"analysis limit unlocks automatically after depositing:\n{tiers_text}"
             f"{status_text}",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Open My Quotex Link", url=link)]])
         )
 
     # ---------------- Plan Status (client-facing) ----------------
@@ -977,6 +992,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=chat.id, action="upload_photo")
     await maybe_send_intro_video(update, context)  # random chance, cosmetic only
 
+    await update.message.reply_text(
+        random.choice(SESSION_DUAS),
+        parse_mode="Markdown"
+    )
+
     processing_msg = await update.message.reply_text(
         "⚡ *MI NEXUS Engine Starting...*\n░░░░░░░░░░ 0%",
         parse_mode="Markdown"
@@ -1193,7 +1213,7 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💵 Basic — Rs 500/mo (15/day)", callback_data="plan_basic")],
         [InlineKeyboardButton("💰 Pro — Rs 1000/mo (35/day)", callback_data="plan_pro")],
         [InlineKeyboardButton("👑 Unlimited — Rs 5000/mo", callback_data="plan_unlimited")],
-        [InlineKeyboardButton("🔗 Get My Quotex Link", callback_data="menu_quotex_link")],
+        [InlineKeyboardButton("🌐 Open My Quotex Link", url=link)],
     ]
 
     await update.message.reply_text(
@@ -1203,10 +1223,9 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Pick a plan below, pay via QR, send your screenshot — admin "
         f"approves and activates it.\n\n"
         f"*── Option B: Free via Quotex Deposit ──*\n"
-        f"Sign up on Quotex through your personal link, deposit, and your "
-        f"daily limit unlocks automatically — no payment to us at all:\n"
+        f"Sign up on Quotex through your personal link below, deposit, and "
+        f"your daily limit unlocks automatically — no payment to us at all:\n"
         f"{quotex_lines}\n\n"
-        f"Your link:\n`{link}`\n\n"
         f"_Whichever option gives you a higher daily limit is the one "
         f"that applies._",
         parse_mode="Markdown",

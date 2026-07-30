@@ -52,7 +52,22 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v16 — Quotex Plans Merged, Admin Tier Editor, New Branding + Video Intros)
+## Features (v17 — Working Quotex Link Button, Fixed Video/Banner Display, Session Dua)
+
+- 🌐 **Fixed: Quotex link button now actually opens in the browser** — it
+  was previously just showing the link as plain text you had to copy. Both
+  `/plans` and the menu's "Get Free Quotex Link" now use a real Telegram
+  `url` button that opens the link directly on tap.
+- 🎬 **Fixed: banner/video weren't showing for returning users** — they
+  were only ever sent to a brand-new account's very first `/start`. Typing
+  `/start` again now also has a chance to show them, even for existing
+  users, so the branding isn't a one-time-only thing.
+- 🕌 **Islamic session opening** — before each chart analysis begins (and
+  on every "Session Start" group post), the bot now sends a short, rotating
+  Bismillah / Durood Shareef / dua as a respectful opening blessing before
+  starting the analysis - not a claim that it changes outcomes, just a
+  moment of remembrance before beginning.
+
 
 - 💎 **`/plans` now shows BOTH paths in one place**: the manual Rs QR-code
   plans AND the free Quotex-deposit tiers, side by side, with the user's
