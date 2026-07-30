@@ -13,6 +13,7 @@ Run:
 """
 
 import os
+import random
 import logging
 from datetime import datetime
 
@@ -45,6 +46,8 @@ from utils.firebase_db import (
     get_bot_config, adjust_signal_sensitivity,
     start_free_trial, has_used_trial,
     get_quotex_tracking_link, get_quotex_deposit_status,
+    get_quotex_tiers, set_quotex_tier, remove_quotex_tier, tier_for_amount,
+    get_quotex_full_profile, list_users_with_quotex_activity,
 )
 import asyncio
 
@@ -54,6 +57,16 @@ import asyncio
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_USER_ID = int(os.environ.get("ADMIN_USER_ID", "8865257002"))
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
+BANNER_PATH = os.path.join(os.path.dirname(__file__), "assets", "banner.png")
+VIDEOS_DIR = os.path.join(os.path.dirname(__file__), "assets", "videos")
+INTRO_VIDEOS = [
+    os.path.join(VIDEOS_DIR, "intro_1.mp4"),
+    os.path.join(VIDEOS_DIR, "intro_2.mp4"),
+    os.path.join(VIDEOS_DIR, "intro_3.mp4"),
+]
+# Chance (0.0-1.0) that a random intro/animation video is sent alongside
+# an analysis - keeps it feeling premium without spamming every single time.
+VIDEO_SHOW_CHANCE = 0.35
 
 TIMEFRAME_OPTIONS = [
     ("5 Sec", "5s"), ("15 Sec", "15s"), ("30 Sec", "30s"),
@@ -83,6 +96,28 @@ DURATION_LABELS = {code: label for label, code in TRADE_DURATION_OPTIONS}
 
 def is_admin(user_id):
     return user_id == ADMIN_USER_ID
+
+
+async def maybe_send_intro_video(update: Update, context: ContextTypes.DEFAULT_TYPE, force=False):
+    """
+    Randomly (or forced) sends one of the MI NEXUS intro/animation clips.
+    Silently does nothing if no video files are present or on send failure -
+    this is a cosmetic touch, never a required step.
+    """
+    available = [v for v in INTRO_VIDEOS if os.path.exists(v)]
+    if not available:
+        return
+    if not force and random.random() > VIDEO_SHOW_CHANCE:
+        return
+    try:
+        with open(random.choice(available), "rb") as vid:
+            await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=vid,
+                supports_streaming=True,
+            )
+    except Exception as e:
+        logger.warning(f"Intro video send failed (non-critical): {e}")
 
 
 BLOCKED_MESSAGE = (
@@ -144,6 +179,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_main_menu(update, context)
     else:
         await play_intro_animation(update, context)
+
+        # Premium banner image, if available, sets the visual tone before the welcome text
+        if os.path.exists(BANNER_PATH):
+            try:
+                with open(BANNER_PATH, "rb") as banner:
+                    await context.bot.send_photo(chat_id=chat.id, photo=banner)
+            except Exception as e:
+                logger.warning(f"Banner send failed (non-critical): {e}")
+
+        # First-time users get a guaranteed animation clip for a strong first impression
+        await maybe_send_intro_video(update, context, force=True)
+
         keyboard = [[InlineKeyboardButton("🚀 Create Account / Login", callback_data="account_login")]]
         await update.message.reply_text(
             "💎 *Welcome to MI NEXUS* 💎\n\n"
@@ -266,8 +313,51 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---- Admin: cancel any pending admin text-input flow ----
     if text == "/cancel" and is_admin(user.id):
         context.user_data["awaiting_admin_broadcast_text"] = False
+        context.user_data["awaiting_quotex_tier"] = None
         await update.message.reply_text("❌ Cancelled.")
         return
+
+    # ---- Admin: awaiting a Quotex tier add/edit/delete ----
+    if is_admin(user.id) and context.user_data.get("awaiting_quotex_tier") is not None:
+        target = context.user_data.get("awaiting_quotex_tier")
+        context.user_data["awaiting_quotex_tier"] = None
+
+        if target == "new":
+            parts = text.split()
+            if len(parts) != 2:
+                await update.message.reply_text(
+                    "⚠️ Please send two numbers like `25 60`. Try again via "
+                    "the admin panel.", parse_mode="Markdown"
+                )
+                return
+            try:
+                threshold, limit = float(parts[0]), int(parts[1])
+            except ValueError:
+                await update.message.reply_text("⚠️ Both values must be numbers. Try again via the admin panel.")
+                return
+            set_quotex_tier(threshold, limit)
+            await update.message.reply_text(
+                f"✅ New tier added: *${threshold}* → *{limit} analyses/day*",
+                parse_mode="Markdown"
+            )
+            return
+        else:
+            threshold = target
+            if text.strip().lower() == "delete":
+                remove_quotex_tier(threshold)
+                await update.message.reply_text(f"🗑️ Tier ${threshold} removed.")
+                return
+            try:
+                new_limit = int(text.strip())
+            except ValueError:
+                await update.message.reply_text("⚠️ Please send a whole number, or `delete`. Try again via the admin panel.")
+                return
+            set_quotex_tier(threshold, new_limit)
+            await update.message.reply_text(
+                f"✅ Tier updated: *${threshold}* → *{new_limit} analyses/day*",
+                parse_mode="Markdown"
+            )
+            return
 
     # ---- Admin: awaiting broadcast text to send to all groups ----
     if is_admin(user.id) and context.user_data.get("awaiting_admin_broadcast_text"):
@@ -413,7 +503,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ADMIN_CALLBACK_PREFIXES = (
         "admin_", "setqr_", "payapprove_", "payreject_",
         "blockuser_", "unblockuser_", "freezeuser_", "unfreezeuser_",
-        "tuner_",
+        "tuner_", "quotexedit_", "quotexuser_",
     )
     if data.startswith(ADMIN_CALLBACK_PREFIXES):
         await handle_admin_callback(query, context, data)
@@ -593,9 +683,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "menu_quotex_link":
+        link = get_quotex_tracking_link(user_id)
+        total_deposit, quotex_limit = get_quotex_deposit_status(user_id)
+        tiers = sorted(get_quotex_tiers(), key=lambda t: t[0])
+        tiers_text = "\n".join(f"• Deposit ${t[0]} → {t[1]} analyses/day" for t in tiers)
+
+        status_text = ""
+        if total_deposit and total_deposit > 0:
+            status_text = f"\n\n📊 Your verified deposit: *${total_deposit:.2f}* → *{quotex_limit or 0} analyses/day*"
+
         await query.edit_message_text(
-            "🔗 Use /invite to get your personal Quotex link and see your "
-            "current deposit-tier status.",
+            f"🔗 *Your Personal Quotex Link*\n\n`{link}`\n\n"
+            f"Sign up through this link and deposit — your daily analysis "
+            f"limit unlocks automatically:\n{tiers_text}"
+            f"{status_text}",
             parse_mode="Markdown"
         )
 
@@ -874,6 +975,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     await context.bot.send_chat_action(chat_id=chat.id, action="upload_photo")
+    await maybe_send_intro_video(update, context)  # random chance, cosmetic only
 
     processing_msg = await update.message.reply_text(
         "⚡ *MI NEXUS Engine Starting...*\n░░░░░░░░░░ 0%",
@@ -1054,47 +1156,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ----------------------------------------------------------------------
 # SUBSCRIPTION PLANS + PAYMENT FLOW
 # ----------------------------------------------------------------------
-async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Gives the user their personal Quotex tracking link (with their
-    Telegram ID embedded as the click/sub ID) plus their current deposit
-    status and the resulting daily analysis limit.
-    """
-    user = update.effective_user
-    if update.effective_chat.type in ("group", "supergroup"):
-        return
-
-    link = get_quotex_tracking_link(user.id)
-    total_deposit, daily_limit = get_quotex_deposit_status(user.id)
-
-    tiers_text = (
-        "💵 *$10 deposited* → 18 analyses/day\n"
-        "💰 *$20 deposited* → 40 analyses/day\n"
-        "🔥 *$50 deposited* → 120 analyses/day\n"
-        "👑 *$100 deposited* → 300 analyses/day"
-    )
-
-    status_text = ""
-    if total_deposit and total_deposit > 0:
-        status_text = (
-            f"\n\n📊 *Your Verified Deposits:* ${total_deposit:.2f}\n"
-            f"🎯 *Your Daily Limit:* {daily_limit if daily_limit else 'Not yet tier-qualified'}"
-        )
-
-    await update.message.reply_text(
-        f"🔗 *Your Personal Quotex Link*\n\n"
-        f"`{link}`\n\n"
-        f"Create your Quotex account through this link, then deposit — "
-        f"your daily analysis limit unlocks automatically once your "
-        f"deposit is verified (usually within a few minutes).\n\n"
-        f"*Deposit Tiers:*\n{tiers_text}"
-        f"{status_text}\n\n"
-        f"⚠️ _Only trade with money you can afford to lose. This bot's "
-        f"signals are not guaranteed — see /menu → 📖 How To Use for "
-        f"responsible trading guidance._",
-        parse_mode="Markdown"
-    )
-
 
 async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1104,9 +1165,26 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_plan = get_active_plan(user.id)
     if active_plan:
         plan_label = PLAN_LIMITS.get(active_plan, {}).get("label", active_plan)
-        status_text = f"✅ Your active plan: *{plan_label}*\n\n"
+        status_text = f"✅ Active paid plan: *{plan_label}*\n"
+    else:
+        status_text = ""
+
+    total_deposit, quotex_limit = get_quotex_deposit_status(user.id)
+    if total_deposit and total_deposit > 0:
+        status_text += f"💹 Quotex verified deposit: *${total_deposit:.2f}* → *{quotex_limit or 0} analyses/day*\n"
+
+    if status_text:
+        status_text += "\n"
     else:
         status_text = "You don't have an active plan yet.\n\n"
+
+    tiers = get_quotex_tiers()  # [[threshold, limit], ...] sorted descending
+    tiers_ascending = sorted(tiers, key=lambda t: t[0])
+    quotex_lines = "\n".join(
+        f"• Deposit *${t[0]}* → *{t[1]} analyses/day*" for t in tiers_ascending
+    )
+
+    link = get_quotex_tracking_link(user.id)
 
     keyboard = []
     if not active_plan and not has_used_trial(user.id):
@@ -1115,11 +1193,22 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💵 Basic — Rs 500/mo (15/day)", callback_data="plan_basic")],
         [InlineKeyboardButton("💰 Pro — Rs 1000/mo (35/day)", callback_data="plan_pro")],
         [InlineKeyboardButton("👑 Unlimited — Rs 5000/mo", callback_data="plan_unlimited")],
+        [InlineKeyboardButton("🔗 Get My Quotex Link", callback_data="menu_quotex_link")],
     ]
+
     await update.message.reply_text(
         f"💎 *MI NEXUS Subscription Plans* 💎\n\n"
         f"{status_text}"
-        f"Choose a plan below to see payment details:",
+        f"*── Option A: Pay Directly (Rs) ──*\n"
+        f"Pick a plan below, pay via QR, send your screenshot — admin "
+        f"approves and activates it.\n\n"
+        f"*── Option B: Free via Quotex Deposit ──*\n"
+        f"Sign up on Quotex through your personal link, deposit, and your "
+        f"daily limit unlocks automatically — no payment to us at all:\n"
+        f"{quotex_lines}\n\n"
+        f"Your link:\n`{link}`\n\n"
+        f"_Whichever option gives you a higher daily limit is the one "
+        f"that applies._",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -1221,6 +1310,10 @@ async def show_admin_panel(query_or_update, context):
         [
             InlineKeyboardButton("🚫 Manage Members", callback_data="admin_members"),
             InlineKeyboardButton("👥 Connected Groups", callback_data="menu_groups"),
+        ],
+        [
+            InlineKeyboardButton("💹 Quotex Deposit Tiers", callback_data="admin_quotex_tiers"),
+            InlineKeyboardButton("📊 Quotex Users", callback_data="admin_quotex_users"),
         ],
         [InlineKeyboardButton(f"🎚️ Signal Tuner ({sensitivity}x)", callback_data="admin_tuner")],
         [InlineKeyboardButton("📢 Broadcast Text to All Groups", callback_data="admin_broadcast_text")],
@@ -1464,6 +1557,93 @@ async def handle_admin_callback(query, context, data):
     elif data == "admin_back_panel":
         await show_admin_panel(query, context)
 
+    # ---------------- Quotex Deposit Tier Management ----------------
+    elif data == "admin_quotex_tiers":
+        tiers = sorted(get_quotex_tiers(), key=lambda t: t[0])
+        lines = "\n".join(f"• ${t[0]} → {t[1]} analyses/day" for t in tiers)
+        keyboard = [
+            [InlineKeyboardButton(f"✏️ Edit ${t[0]} tier", callback_data=f"quotexedit_{t[0]}")]
+            for t in tiers
+        ]
+        keyboard.append([InlineKeyboardButton("➕ Add New Tier", callback_data="quotexedit_new")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")])
+        await query.edit_message_text(
+            f"💹 *Quotex Deposit Tiers*\n\n{lines}\n\n"
+            f"_Tap a tier to change its daily-analysis limit, or add a new one._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("quotexedit_"):
+        raw = data.replace("quotexedit_", "")
+        if raw == "new":
+            context.user_data["awaiting_quotex_tier"] = "new"
+            await query.edit_message_text(
+                "➕ *Add New Tier*\n\n"
+                "Send two numbers separated by a space: `deposit_amount daily_limit`\n"
+                "Example: `25 60` means a $25 deposit unlocks 60 analyses/day.",
+                parse_mode="Markdown"
+            )
+        else:
+            threshold = int(raw)
+            context.user_data["awaiting_quotex_tier"] = threshold
+            await query.edit_message_text(
+                f"✏️ *Editing ${threshold} Tier*\n\n"
+                f"Send the new daily-analysis limit as a number, or send "
+                f"`delete` to remove this tier entirely.",
+                parse_mode="Markdown"
+            )
+
+    # ---------------- Quotex Users Overview (strict oversight) ----------------
+    elif data == "admin_quotex_users":
+        users = list_users_with_quotex_activity()
+        if not users:
+            await query.edit_message_text(
+                "📊 *Quotex Users*\n\nNo users have registered via a Quotex "
+                "link yet.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")]])
+            )
+            return
+
+        keyboard = [
+            [InlineKeyboardButton(
+                f"@{u['username'] or u['user_id']} — ${u['total_deposit']:.0f}",
+                callback_data=f"quotexuser_{u['user_id']}"
+            )] for u in users[:20]
+        ]
+        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")])
+        await query.edit_message_text(
+            f"📊 *Quotex Users* ({len(users)} total)\n\n"
+            f"_Tap a user for their full deposit/withdrawal breakdown._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("quotexuser_"):
+        target_id = int(data.replace("quotexuser_", ""))
+        profile = get_quotex_full_profile(target_id)
+        target_user = get_user(target_id) or {}
+
+        net_emoji = "🟢" if profile["net_position"] >= 0 else "🔴"
+
+        await query.edit_message_text(
+            f"📊 *Quotex Profile — @{target_user.get('username', target_id)}*\n\n"
+            f"🆔 Telegram ID: `{target_id}`\n"
+            f"🎮 Quotex Trader ID: `{profile['trader_id'] or 'N/A'}`\n"
+            f"🌍 Country: {profile['country'] or 'N/A'}\n"
+            f"✅ Registered: {'Yes' if profile['registered'] else 'No'}\n"
+            f"📧 Email Confirmed: {'Yes' if profile['email_confirmed'] else 'No'}\n\n"
+            f"💰 Total Deposited: *${profile['total_deposit']:.2f}*\n"
+            f"💸 Total Withdrawn: *${profile['total_withdrawn']:.2f}*\n"
+            f"{net_emoji} Net Position: *${profile['net_position']:.2f}*\n\n"
+            f"🎯 Current Tier: *${profile['tier_threshold'] or 0}* → "
+            f"*{profile['daily_limit'] or 0} analyses/day*\n"
+            f"🕐 Last Deposit: {profile['last_deposit_at'] or 'N/A'}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="admin_quotex_users")]])
+        )
+
     elif data == "admin_setqr":
         keyboard = [
             [InlineKeyboardButton("Basic Plan QR", callback_data="setqr_basic")],
@@ -1562,7 +1742,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("plans", plans_command))
-    app.add_handler(CommandHandler("invite", invite_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("finduser", finduser_command))
     app.add_handler(CallbackQueryHandler(button_handler))

@@ -385,14 +385,13 @@ def check_and_increment_usage(user_id):
     return True, effective_limit - new_count, effective_source
 
 
-def get_quotex_tracking_link(user_id, base_link="https://broker-qx.pro/sign-up/"):
+def get_quotex_tracking_link(user_id, base_link="https://broker-qx.pro/sign-up/fast/"):
     """
     Builds a per-user Quotex tracking link with the Telegram user_id
-    embedded as the sub/click ID, so the postback endpoint can match a
-    deposit event back to this specific user.
-    NOTE: confirm the exact query-param name Quotex expects for sub-ID
-    tracking in your Affiliate Center's link-builder (commonly `lid` or
-    a custom sub-ID param) and adjust here if it differs.
+    embedded as the `lid` (Link ID) parameter - confirmed against the
+    real Quotex Affiliate Center Postback screen, where `lid` maps to
+    the {lid} macro that comes back in postback events, letting the
+    postback endpoint match a deposit back to this specific Telegram user.
     """
     return f"{base_link}?lid={user_id}"
 
@@ -466,6 +465,9 @@ _DEFAULT_CONFIG = {
     "signal_sensitivity": 1.0,   # 0.7 (conservative) .. 1.3 (aggressive)
     "min_confidence_floor": 54,  # lowest displayed confidence %
     "max_confidence_ceiling": 96,
+    # Admin-editable Quotex deposit tiers: list of [threshold_usd, daily_limit]
+    # sorted descending by threshold. Edited via the admin panel.
+    "quotex_tiers": [[100, 300], [50, 120], [20, 40], [10, 18]],
 }
 
 
@@ -489,3 +491,82 @@ def adjust_signal_sensitivity(delta):
     new_val = round(max(0.7, min(1.3, cfg.get("signal_sensitivity", 1.0) + delta)), 2)
     set_bot_config_value("signal_sensitivity", new_val)
     return new_val
+
+
+def get_quotex_tiers():
+    """Returns the current admin-configured tier list: [[threshold, limit], ...]"""
+    cfg = get_bot_config()
+    return cfg.get("quotex_tiers", _DEFAULT_CONFIG["quotex_tiers"])
+
+
+def set_quotex_tier(threshold, daily_limit):
+    """
+    Adds or updates a single tier (e.g. threshold=20, daily_limit=40).
+    Keeps the tier list sorted descending by threshold.
+    """
+    tiers = get_quotex_tiers()
+    tiers = [t for t in tiers if t[0] != threshold]  # replace if it already exists
+    tiers.append([threshold, daily_limit])
+    tiers.sort(key=lambda t: t[0], reverse=True)
+    set_bot_config_value("quotex_tiers", tiers)
+    return tiers
+
+
+def remove_quotex_tier(threshold):
+    tiers = get_quotex_tiers()
+    tiers = [t for t in tiers if t[0] != threshold]
+    set_bot_config_value("quotex_tiers", tiers)
+    return tiers
+
+
+def tier_for_amount(amount):
+    """Given a deposit amount, returns (threshold, daily_limit) for the
+    highest tier the amount qualifies for, or (None, None) if below all tiers."""
+    for threshold, limit in get_quotex_tiers():
+        if amount >= threshold:
+            return threshold, limit
+    return None, None
+
+
+def get_quotex_full_profile(user_id):
+    """
+    Returns the complete Quotex-related profile for a user, for the
+    admin's strict oversight view: registration status, total deposited,
+    total withdrawn, net position, current tier, trader ID, country.
+    """
+    user = get_user(user_id) or {}
+    total_deposit = user.get("quotex_total_deposit", 0)
+    total_withdrawn = user.get("quotex_total_withdrawn", 0)
+    threshold, limit = tier_for_amount(total_deposit) if total_deposit else (None, None)
+    return {
+        "registered": user.get("quotex_registered", False),
+        "registered_at": user.get("quotex_registered_at"),
+        "email_confirmed": user.get("quotex_email_confirmed", False),
+        "trader_id": user.get("quotex_trader_id"),
+        "country": user.get("quotex_country"),
+        "total_deposit": total_deposit,
+        "total_withdrawn": total_withdrawn,
+        "net_position": total_deposit - total_withdrawn,
+        "tier_threshold": threshold,
+        "daily_limit": limit,
+        "last_deposit_at": user.get("quotex_last_deposit_at"),
+    }
+
+
+def list_users_with_quotex_activity():
+    """Returns all users who have any Quotex deposit/registration activity,
+    for the admin's oversight list."""
+    db = init_firebase()
+    docs = db.collection("users").where("quotex_registered", "==", True).stream()
+    results = []
+    for d in docs:
+        data = d.to_dict()
+        results.append({
+            "user_id": data.get("user_id"),
+            "username": data.get("username"),
+            "total_deposit": data.get("quotex_total_deposit", 0),
+            "total_withdrawn": data.get("quotex_total_withdrawn", 0),
+            "daily_limit": data.get("quotex_daily_limit"),
+        })
+    results.sort(key=lambda u: u["total_deposit"], reverse=True)
+    return results

@@ -52,7 +52,30 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v14 — Quotex Affiliate Deposit-Tier Unlocking)
+## Features (v16 — Quotex Plans Merged, Admin Tier Editor, New Branding + Video Intros)
+
+- 💎 **`/plans` now shows BOTH paths in one place**: the manual Rs QR-code
+  plans AND the free Quotex-deposit tiers, side by side, with the user's
+  personal Quotex link included directly (the earlier separate `/invite`
+  command has been removed — everything lives in `/plans` now).
+- 🎚️ **Admin-configurable Quotex tiers** — no more hardcoded $10/$20/$50/$100
+  thresholds. From `/admin` → 💹 Quotex Deposit Tiers, you can edit any
+  tier's daily-analysis limit, delete a tier, or add new ones (e.g. a $25
+  or $75 tier) — changes take effect immediately for both the bot AND the
+  Vercel postback endpoint (which reads the same Firestore config).
+- 📊 **Full Quotex user oversight** — `/admin` → 📊 Quotex Users lists every
+  user who signed up via a Quotex link, sorted by deposit size. Tapping one
+  shows their complete profile: registration/email-confirmation status,
+  Quotex trader ID, country, total deposited, total withdrawn, net
+  position, and current tier — a strict, complete view for the admin.
+- 🎨 **Refreshed branding** — new circular 3D MI NEXUS emblem (used as the
+  main logo across signal cards) and a premium wide banner image sent to
+  new users during onboarding.
+- 🎬 **Animated intro videos** — short MI NEXUS animation clips
+  (`assets/videos/`) play for every new user's first `/start`, and appear
+  with a random chance during chart analysis for a livelier, more premium
+  feel without being repetitive.
+
 
 - 🔗 **New `/invite` command** — gives each user their personal Quotex
   tracking link (their Telegram ID embedded as the click/sub ID) plus
