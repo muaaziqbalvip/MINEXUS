@@ -52,7 +52,34 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v17 — Working Quotex Link Button, Fixed Video/Banner Display, Session Dua)
+## Features (v18 — Country Selection + Regional Pricing, Required-Channel Gate, Real Technical Indicators)
+
+- 🌍 **Country selection during account creation** — new users pick their
+  country from a list before their account unlocks. Pakistan-based users
+  see the Rs QR-payment plans as the recommended option in `/plans`;
+  everyone else sees the free Quotex-deposit path as the recommended
+  option instead (with a heads-up if their region is generally reported
+  as Quotex-restricted — informational only, Quotex's own signup flow is
+  the final authority).
+- 🔐 **Required channel/group join gate** — admin can configure one or
+  more channels/groups (`/admin` → 🔐 Required Channels) that users MUST
+  join before they can analyze any chart. Checked automatically via
+  Telegram's membership API, with a "✅ I've Joined — Check Again" button
+  for the user. Admin is always exempt.
+- 🧮 **Real calculated technical indicators** (`utils/technical_indicators.py`),
+  computed directly from the extracted candle data using standard
+  formulas — not visual guesses:
+  - **Fractals** (Bill Williams-style 5-bar pivot detection)
+  - **ZigZag** (threshold-filtered swing structure with HH/HL/LH/LL
+    market-structure labeling)
+  - **Moving Average trend** (short vs. long SMA crossover read)
+  - **Calculated RSI** (Wilder's smoothing method, from actual candle
+    body deltas — distinct from the earlier visual on-chart RSI reader)
+  These feed into the same confluence-scoring system as the candlestick
+  patterns, each nudging confidence up or down based on real agreement
+  or disagreement with the pattern-based signal — shown on the signal
+  card and in the Telegram caption as a new "🧮 Technicals" line.
+
 
 - 🌐 **Fixed: Quotex link button now actually opens in the browser** — it
   was previously just showing the link as plain text you had to copy. Both

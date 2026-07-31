@@ -80,6 +80,7 @@ def create_user(user_id, username):
             "user_id": user_id,
             "username": username,
             "unlocked": False,
+            "country": None,
             "timeframe": "1m",
             "trade_duration": "1m",
             "auto_broadcast": False,
@@ -98,6 +99,16 @@ def create_user(user_id, username):
     else:
         # Existing user re-triggering /start - keep username fresh for admin search
         ref.update({"username": username})
+
+
+def set_user_country(user_id, country_code):
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({"country": country_code})
+
+
+def get_user_country(user_id):
+    user = get_user(user_id)
+    return user.get("country") if user else None
 
 
 def unlock_user(user_id):
@@ -468,6 +479,10 @@ _DEFAULT_CONFIG = {
     # Admin-editable Quotex deposit tiers: list of [threshold_usd, daily_limit]
     # sorted descending by threshold. Edited via the admin panel.
     "quotex_tiers": [[100, 300], [50, 120], [20, 40], [10, 18]],
+    # Required channels/groups a user must join before they can use the
+    # bot. List of dicts: {"name": display name, "chat_id": numeric ID or
+    # @username, "url": invite link}. Empty list = no requirement.
+    "required_channels": [],
 }
 
 
@@ -570,3 +585,26 @@ def list_users_with_quotex_activity():
         })
     results.sort(key=lambda u: u["total_deposit"], reverse=True)
     return results
+
+
+# ----------------------------------------------------------------------
+# REQUIRED CHANNELS (mandatory join-before-access, admin-configurable)
+# ----------------------------------------------------------------------
+def get_required_channels():
+    cfg = get_bot_config()
+    return cfg.get("required_channels", [])
+
+
+def add_required_channel(name, chat_id, url):
+    channels = get_required_channels()
+    channels = [c for c in channels if c["chat_id"] != chat_id]  # replace if exists
+    channels.append({"name": name, "chat_id": chat_id, "url": url})
+    set_bot_config_value("required_channels", channels)
+    return channels
+
+
+def remove_required_channel(chat_id):
+    channels = get_required_channels()
+    channels = [c for c in channels if c["chat_id"] != chat_id]
+    set_bot_config_value("required_channels", channels)
+    return channels

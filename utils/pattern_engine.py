@@ -26,6 +26,8 @@ predicts the market with certainty, and past statistical performance is
 not a promise of future performance.
 """
 
+from utils.technical_indicators import get_technical_confluence
+
 PATTERN_RELIABILITY = {
     # --- Single candle ---
     # NOTE: Several single-candle patterns are popular/easy to spot but have
@@ -699,6 +701,7 @@ def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
     choppiness = compute_market_choppiness(candles)
     sr_nudge = compute_support_resistance_context(candles)
     streak_bonus = compute_streak_bonus(candles)
+    tech = get_technical_confluence(candles)
 
     pattern_score = 0.0
     pattern_weight_sum = 0.0
@@ -758,6 +761,29 @@ def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
 
     final_score = max(-1.0, min(1.0, final_score))
 
+    # ---- Technical indicator confluence (Moving Average trend, ZigZag
+    # market structure, and a properly CALCULATED RSI from actual candle
+    # data - distinct from the visual on-chart RSI read above, this one
+    # is computed with Wilder's formula from the candles themselves) ----
+    tech_agree_count = 0
+    tech_disagree_count = 0
+    pattern_direction = "bullish" if final_score >= 0 else "bearish"
+
+    for tech_signal in (tech.get("ma_trend"), tech.get("zigzag_structure_bias"), tech.get("rsi_bias")):
+        if tech_signal == pattern_direction:
+            tech_agree_count += 1
+        elif tech_signal in ("bullish", "bearish"):
+            tech_disagree_count += 1
+
+    if tech_agree_count or tech_disagree_count:
+        net_tech = tech_agree_count - tech_disagree_count
+        # Each net agreeing indicator nudges confidence ~4%, capped modestly
+        # so technicals support the pattern read rather than overriding it.
+        tech_factor = 1.0 + max(-0.15, min(0.15, net_tech * 0.04))
+        final_score *= tech_factor
+
+    final_score = max(-1.0, min(1.0, final_score))
+
     direction = "UP" if final_score >= 0 else "DOWN"
     confidence = min(96, max(54, 55 + abs(final_score) * 42))
 
@@ -784,4 +810,5 @@ def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
         "sensitivity": round(sensitivity, 2),
         "rsi_signal": rsi_signal if rsi_signal and rsi_signal.get("detected") else None,
         "rsi_agrees": rsi_agrees,
+        "technical_indicators": tech,
     }

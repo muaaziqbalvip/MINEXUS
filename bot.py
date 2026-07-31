@@ -32,6 +32,7 @@ from utils.sticker_generator import (
     get_direction_sticker, get_session_start_sticker, get_result_sticker
 )
 from utils.imgbb_uploader import upload_image
+from utils.country_data import COUNTRIES, country_label, is_generally_restricted, get_pricing_region
 from utils.firebase_db import (
     init_firebase, get_user, create_user, unlock_user, is_unlocked,
     set_user_timeframe, get_timeframe, set_trade_duration, get_trade_duration,
@@ -48,6 +49,8 @@ from utils.firebase_db import (
     get_quotex_tracking_link, get_quotex_deposit_status,
     get_quotex_tiers, set_quotex_tier, remove_quotex_tier, tier_for_amount,
     get_quotex_full_profile, list_users_with_quotex_activity,
+    set_user_country, get_user_country,
+    get_required_channels, add_required_channel, remove_required_channel,
 )
 import asyncio
 
@@ -327,7 +330,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "/cancel" and is_admin(user.id):
         context.user_data["awaiting_admin_broadcast_text"] = False
         context.user_data["awaiting_quotex_tier"] = None
+        context.user_data["awaiting_channel_add"] = False
         await update.message.reply_text("❌ Cancelled.")
+        return
+
+    # ---- Admin: awaiting a required-channel add ----
+    if is_admin(user.id) and context.user_data.get("awaiting_channel_add"):
+        context.user_data["awaiting_channel_add"] = False
+        lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+        if len(lines) != 3:
+            await update.message.reply_text(
+                "⚠️ Please send exactly 3 lines: name, chat_id/@username, "
+                "invite link. Try again via the admin panel."
+            )
+            return
+        name, chat_id, url = lines
+        add_required_channel(name, chat_id, url)
+        await update.message.reply_text(
+            f"✅ Added *{name}* as a required channel.", parse_mode="Markdown"
+        )
         return
 
     # ---- Admin: awaiting a Quotex tier add/edit/delete ----
@@ -476,24 +497,79 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---- Account creation / login (replaces the old password flow) ----
     if data == "account_login":
+        # Ask for country FIRST - unlocking + trial offer happens after
+        # they pick one (see country_ callback below).
+        keyboard = []
+        row = []
+        for name, code in COUNTRIES:
+            row.append(InlineKeyboardButton(name, callback_data=f"country_{code}"))
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+
+        await query.edit_message_text(
+            "🌍 *One quick step first — select your country*\n\n"
+            "This determines which pricing options you'll see (some "
+            "regions get direct Rs payment plans, others see the free "
+            "Quotex-deposit path as the main option).",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if data.startswith("country_"):
+        code = data.replace("country_", "")
+        set_user_country(user_id, code)
         unlock_user(user_id)
+
+        restriction_note = ""
+        if is_generally_restricted(code):
+            restriction_note = (
+                "\n\n⚠️ _Note: Quotex is generally not available in your "
+                "region due to broker/regulatory restrictions — the direct "
+                "Rs/paid-plan path is your best option. Quotex's own "
+                "signup process is the final word on this, not us._"
+            )
+
         if not has_used_trial(user_id):
             keyboard = [[InlineKeyboardButton("🎁 Start My Free Trial (10 signals / 1 day)", callback_data="start_trial")]]
             await query.edit_message_text(
-                "✅ *Account Created!*\n\n"
-                "Welcome to MI NEXUS — you're all set.\n\n"
-                "🎁 You have a *free trial* waiting: *10 free signal analyses, "
-                "valid for 1 day*. Tap below to activate it now, or use /plans "
-                "later to subscribe to a paid plan.",
+                f"✅ *Account Created!* ({country_label(code)})\n\n"
+                f"Welcome to MI NEXUS — you're all set.\n\n"
+                f"🎁 You have a *free trial* waiting: *10 free signal analyses, "
+                f"valid for 1 day*. Tap below to activate it now, or use /plans "
+                f"later to subscribe to a paid plan.{restriction_note}",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         else:
             await query.edit_message_text(
-                "✅ *Account Created!*\n\nWelcome to MI NEXUS — you're all set.",
+                f"✅ *Account Created!* ({country_label(code)})\n\n"
+                f"Welcome to MI NEXUS — you're all set.{restriction_note}",
                 parse_mode="Markdown"
             )
         await send_main_menu(update, context)
+        return
+
+    if data == "recheck_channels":
+        missing = await _check_required_channels(context, user_id)
+        if missing:
+            keyboard = [[InlineKeyboardButton(f"📢 Join {ch['name']}", url=ch['url'])] for ch in missing]
+            keyboard.append([InlineKeyboardButton("✅ I've Joined — Check Again", callback_data="recheck_channels")])
+            await query.edit_message_text(
+                "❌ *Still Missing*\n\nYou haven't joined all required "
+                "channel(s)/group(s) yet:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            await query.edit_message_text(
+                "✅ *All Set!* You've joined everything required — go ahead "
+                "and send a chart screenshot.",
+                parse_mode="Markdown"
+            )
         return
 
     if data == "start_trial":
@@ -517,7 +593,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ADMIN_CALLBACK_PREFIXES = (
         "admin_", "setqr_", "payapprove_", "payreject_",
         "blockuser_", "unblockuser_", "freezeuser_", "unfreezeuser_",
-        "tuner_", "quotexedit_", "quotexuser_",
+        "tuner_", "quotexedit_", "quotexuser_", "chanadd_", "chanrm_",
     )
     if data.startswith(ADMIN_CALLBACK_PREFIXES):
         await handle_admin_callback(query, context, data)
@@ -930,6 +1006,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_text(f"📢 Also posted to {sent} group(s).")
 
 
+async def _check_required_channels(context: ContextTypes.DEFAULT_TYPE, user_id):
+    """
+    Checks the user's membership in every admin-configured required
+    channel/group. Returns a list of channels they HAVEN'T joined yet
+    (empty list = all requirements satisfied).
+    Requires the bot to be an admin/member of each required channel to
+    be able to check membership via get_chat_member.
+    """
+    channels = get_required_channels()
+    if not channels:
+        return []
+
+    missing = []
+    for ch in channels:
+        try:
+            member = await context.bot.get_chat_member(chat_id=ch["chat_id"], user_id=user_id)
+            if member.status in ("left", "kicked"):
+                missing.append(ch)
+        except Exception as e:
+            # If we can't check (bot not in that chat, invalid ID, etc.),
+            # fail open rather than blocking everyone due to a config error -
+            # but log it so the admin notices and fixes the channel setup.
+            logger.warning(f"Could not check membership for {ch}: {e}")
+    return missing
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
@@ -955,6 +1057,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_unlocked(user.id):
         await update.message.reply_text("🔐 Please enter the access password first. Use /start")
         return
+
+    # ---- Required channel/group join gate (admin exempt) ----
+    if not is_admin(user.id):
+        missing = await _check_required_channels(context, user.id)
+        if missing:
+            keyboard = [[InlineKeyboardButton(f"📢 Join {ch['name']}", url=ch['url'])] for ch in missing]
+            keyboard.append([InlineKeyboardButton("✅ I've Joined — Check Again", callback_data="recheck_channels")])
+            await update.message.reply_text(
+                "🔒 *Join Required*\n\n"
+                "Please join the channel(s)/group(s) below to use MI NEXUS, "
+                "then tap 'I've Joined' to continue:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
 
     # ---- Subscription plan gating (admin is exempt) ----
     if not is_admin(user.id):
@@ -1087,6 +1204,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             agree_symbol = " ✅" if rsi_agrees else (" ⚠️" if rsi_agrees is False else "")
             rsi_line = f"📉 RSI Zone: *{rsi_data['zone']}*{agree_symbol}\n"
 
+        tech_line = ""
+        tech = prediction.get("technical_indicators")
+        if tech:
+            tech_parts = []
+            if tech.get("calculated_rsi") is not None:
+                tech_parts.append(f"RSI(14): {tech['calculated_rsi']}")
+            if tech.get("ma_trend") and tech["ma_trend"] != "flat":
+                tech_parts.append(f"MA: {tech['ma_trend'].capitalize()}")
+            if tech.get("zigzag_structure_bias") and tech["zigzag_structure_bias"] != "neutral":
+                tech_parts.append(f"Structure: {tech['zigzag_structure_bias'].capitalize()}")
+            if tech.get("fractals_count"):
+                tech_parts.append(f"Fractals: {tech['fractals_count']}")
+            if tech_parts:
+                tech_line = f"🧮 Technicals: *{' • '.join(tech_parts)}*\n"
+
         caption = (
             f"💎 *MI NEXUS PREMIUM SIGNAL* 💎\n\n"
             f"{dir_emoji} Direction: *{prediction['direction']}*\n"
@@ -1096,6 +1228,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🕯️ Key Pattern: *{top_pattern}* ({pattern_count} total detected)\n"
             f"📈 Market Condition: *{condition_text}*\n"
             f"{rsi_line}"
+            f"{tech_line}"
             f"💹 Pair: *{pair_name}*\n\n"
             f"✅ _Trade smart, manage your risk._"
         )
@@ -1182,6 +1315,9 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type in ("group", "supergroup"):
         return
 
+    country_code = get_user_country(user.id)
+    region = get_pricing_region(country_code) if country_code else "intl"
+
     active_plan = get_active_plan(user.id)
     if active_plan:
         plan_label = PLAN_LIMITS.get(active_plan, {}).get("label", active_plan)
@@ -1206,26 +1342,54 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     link = get_quotex_tracking_link(user.id)
 
-    keyboard = []
+    trial_btn = []
     if not active_plan and not has_used_trial(user.id):
-        keyboard.append([InlineKeyboardButton("🎁 Free Trial — 10 signals / 1 day", callback_data="start_trial")])
-    keyboard += [
+        trial_btn = [InlineKeyboardButton("🎁 Free Trial — 10 signals / 1 day", callback_data="start_trial")]
+
+    rs_plan_buttons = [
         [InlineKeyboardButton("💵 Basic — Rs 500/mo (15/day)", callback_data="plan_basic")],
         [InlineKeyboardButton("💰 Pro — Rs 1000/mo (35/day)", callback_data="plan_pro")],
         [InlineKeyboardButton("👑 Unlimited — Rs 5000/mo", callback_data="plan_unlimited")],
-        [InlineKeyboardButton("🌐 Open My Quotex Link", url=link)],
     ]
+    quotex_button = [InlineKeyboardButton("🌐 Open My Quotex Link", url=link)]
+
+    if region == "pk":
+        # Pakistan: Rs plans are the primary, familiar path
+        option_a_title = "*── Option A: Pay Directly (Rs) — Recommended ──*"
+        option_b_title = "*── Option B: Free via Quotex Deposit ──*"
+        keyboard = ([trial_btn] if trial_btn else []) + rs_plan_buttons + [quotex_button]
+    else:
+        # Everyone else: no local Rs payment rail, so lead with Quotex
+        option_a_title = "*── Option A: Free via Quotex Deposit — Recommended ──*"
+        option_b_title = "*── Option B: Pay Directly (Rs, Pakistan-only payment method) ──*"
+        keyboard = ([trial_btn] if trial_btn else []) + [quotex_button] + rs_plan_buttons
+
+    if region == "pk":
+        body = (
+            f"{option_a_title}\n"
+            f"Pick a plan below, pay via QR, send your screenshot — admin "
+            f"approves and activates it.\n\n"
+            f"{option_b_title}\n"
+            f"Sign up on Quotex through your personal link below, deposit, "
+            f"and your daily limit unlocks automatically — no payment to us "
+            f"at all:\n{quotex_lines}\n\n"
+        )
+    else:
+        body = (
+            f"{option_a_title}\n"
+            f"Sign up on Quotex through your personal link below, deposit, "
+            f"and your daily limit unlocks automatically — completely free:\n"
+            f"{quotex_lines}\n\n"
+            f"{option_b_title}\n"
+            f"_Our Rs QR-code payment plans are set up for Pakistan-based "
+            f"payment methods and may not be practical from your region — "
+            f"the Quotex path above is usually the better option for you._\n\n"
+        )
 
     await update.message.reply_text(
         f"💎 *MI NEXUS Subscription Plans* 💎\n\n"
         f"{status_text}"
-        f"*── Option A: Pay Directly (Rs) ──*\n"
-        f"Pick a plan below, pay via QR, send your screenshot — admin "
-        f"approves and activates it.\n\n"
-        f"*── Option B: Free via Quotex Deposit ──*\n"
-        f"Sign up on Quotex through your personal link below, deposit, and "
-        f"your daily limit unlocks automatically — no payment to us at all:\n"
-        f"{quotex_lines}\n\n"
+        f"{body}"
         f"_Whichever option gives you a higher daily limit is the one "
         f"that applies._",
         parse_mode="Markdown",
@@ -1335,6 +1499,7 @@ async def show_admin_panel(query_or_update, context):
             InlineKeyboardButton("📊 Quotex Users", callback_data="admin_quotex_users"),
         ],
         [InlineKeyboardButton(f"🎚️ Signal Tuner ({sensitivity}x)", callback_data="admin_tuner")],
+        [InlineKeyboardButton("🔐 Required Channels", callback_data="admin_channels")],
         [InlineKeyboardButton("📢 Broadcast Text to All Groups", callback_data="admin_broadcast_text")],
     ]
     text = (
@@ -1577,6 +1742,50 @@ async def handle_admin_callback(query, context, data):
         await show_admin_panel(query, context)
 
     # ---------------- Quotex Deposit Tier Management ----------------
+    # ---------------- Required Channels Management ----------------
+    elif data == "admin_channels":
+        channels = get_required_channels()
+        if channels:
+            lines = "\n".join(f"• {c['name']} (`{c['chat_id']}`)" for c in channels)
+        else:
+            lines = "_No required channels set — bot is open to everyone._"
+        keyboard = [
+            [InlineKeyboardButton(f"🗑️ Remove {c['name']}", callback_data=f"chanrm_{c['chat_id']}")]
+            for c in channels
+        ]
+        keyboard.append([InlineKeyboardButton("➕ Add Required Channel", callback_data="chanadd_new")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")])
+        await query.edit_message_text(
+            f"🔐 *Required Channels/Groups*\n\n{lines}\n\n"
+            f"_Users must join ALL of these before they can analyze charts. "
+            f"The bot must be a member/admin of each channel to check "
+            f"membership._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data == "chanadd_new":
+        context.user_data["awaiting_channel_add"] = True
+        await query.edit_message_text(
+            "➕ *Add Required Channel*\n\n"
+            "Send three lines:\n"
+            "`Display Name`\n"
+            "`chat_id or @username`\n"
+            "`invite link (https://t.me/...)`\n\n"
+            "Example:\n"
+            "`MI NEXUS VIP`\n"
+            "`@minexusvip`\n"
+            "`https://t.me/minexusvip`\n\n"
+            "_Tip: the bot must already be a member of that channel/group "
+            "to check who's joined._",
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("chanrm_"):
+        chat_id = data.replace("chanrm_", "")
+        remove_required_channel(chat_id)
+        await query.edit_message_text(f"🗑️ Removed. Channel no longer required.")
+
     elif data == "admin_quotex_tiers":
         tiers = sorted(get_quotex_tiers(), key=lambda t: t[0])
         lines = "\n".join(f"• ${t[0]} → {t[1]} analyses/day" for t in tiers)
