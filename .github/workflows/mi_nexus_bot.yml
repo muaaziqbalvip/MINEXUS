@@ -40,5 +40,6 @@ jobs:
           FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
           ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
         run: |
           python bot.py
