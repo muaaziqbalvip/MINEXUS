@@ -1,620 +1,714 @@
 """
-MI NEXUS - Premium Image Renderer v20
-Builds beautiful, colorful, 3D signal cards & menu banners.
+MI NEXUS - Result Card Renderer
+Builds a beautiful 9:16 dark/green glassmorphism result image:
+  - Original chart pasted on a clean styled background
+  - Next candle prediction (UP/DOWN) marker drawn on chart
+  - Pattern + confidence + timeframe details
+  - MI NEXUS branding footer
 """
 
 import os
-import math
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from datetime import datetime, timezone, timedelta
 
-# ─── Font Setup (Windows-compatible fallback) ─────────────────────────────────
-FONT_DIR_WIN = "C:/Windows/Fonts"
-FONT_DIR_LINUX = "/usr/share/fonts/truetype/dejavu"
+FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+FONT_BOLD = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
+FONT_REG = os.path.join(FONT_DIR, "DejaVuSans.ttf")
 
-def _find_font(bold=False):
-    """Find best available font, fallback to PIL default."""
-    candidates_bold = [
-        os.path.join(FONT_DIR_WIN, "arialbd.ttf"),
-        os.path.join(FONT_DIR_WIN, "Arial Bold.ttf"),
-        os.path.join(FONT_DIR_WIN, "calibrib.ttf"),
-        os.path.join(FONT_DIR_LINUX, "DejaVuSans-Bold.ttf"),
-    ]
-    candidates_reg = [
-        os.path.join(FONT_DIR_WIN, "arial.ttf"),
-        os.path.join(FONT_DIR_WIN, "Arial.ttf"),
-        os.path.join(FONT_DIR_WIN, "calibri.ttf"),
-        os.path.join(FONT_DIR_LINUX, "DejaVuSans.ttf"),
-    ]
-    candidates = candidates_bold if bold else candidates_reg
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return None
+CANVAS_W = 1080
+CANVAS_H = 2200
 
-FONT_BOLD_PATH = _find_font(bold=True)
-FONT_REG_PATH = _find_font(bold=False)
+# MI NEXUS palette
+BG_TOP = (6, 12, 10)
+BG_BOTTOM = (2, 4, 4)
+NEON_GREEN = (57, 255, 20)
+SOFT_GREEN = (120, 220, 140)
+NEON_RED = (255, 60, 60)
+GOLD = (255, 208, 80)
+SILVER = (210, 215, 220)
+CARD_BG = (14, 22, 20)
+CARD_BORDER = (60, 255, 140)
 
-def _font(size, bold=False):
-    path = FONT_BOLD_PATH if bold else FONT_REG_PATH
+
+def _font(path, size):
     try:
-        if path:
-            return ImageFont.truetype(path, size)
+        return ImageFont.truetype(path, size)
     except Exception:
-        pass
-    return ImageFont.load_default()
-
-# ─── Canvas & Color Palette ───────────────────────────────────────────────────
-CW = 1080  # Canvas Width
-CH = 2200  # Canvas Height
-
-# Dark background colors
-BG_DARK = (8, 10, 24)
-BG_MID  = (12, 16, 36)
-
-# Neon accent colors
-NEON_GREEN  = (0, 255, 128)
-NEON_RED    = (255, 50, 100)
-NEON_BLUE   = (60, 140, 255)
-NEON_PURPLE = (180, 60, 255)
-NEON_GOLD   = (255, 200, 60)
-NEON_CYAN   = (0, 220, 255)
-
-SILVER = (200, 210, 220)
-WHITE  = (255, 255, 255)
-CARD_BG = (16, 20, 44)
-CARD_BG2 = (20, 14, 40)
+        return ImageFont.load_default()
 
 
-# ─── Core Drawing Helpers ─────────────────────────────────────────────────────
-
-def _gradient_bg(w, h, top_color, bottom_color):
-    """Creates a smooth vertical gradient background."""
-    img = Image.new("RGBA", (w, h), top_color + (255,))
-    draw = ImageDraw.Draw(img)
+def _vertical_gradient(w, h, top_color, bottom_color):
+    base = Image.new("RGB", (w, h), top_color)
+    top = Image.new("RGB", (w, h), top_color)
+    bottom = Image.new("RGB", (w, h), bottom_color)
+    mask = Image.new("L", (w, h))
+    mask_data = []
     for y in range(h):
-        t = y / max(1, h - 1)
-        r = int(top_color[0] * (1 - t) + bottom_color[0] * t)
-        g = int(top_color[1] * (1 - t) + bottom_color[1] * t)
-        b = int(top_color[2] * (1 - t) + bottom_color[2] * t)
-        draw.line([(0, y), (w, y)], fill=(r, g, b, 255))
-    return img
+        mask_data.extend([int(255 * (y / h))] * w)
+    mask.putdata(mask_data)
+    base.paste(bottom, (0, 0), mask)
+    return base
 
 
-def _draw_colorful_bokeh(canvas, count=18):
-    """Draws soft glowing circles for a beautiful bokeh/neon background effect."""
-    import random
-    w, h = canvas.size
-    colors = [
-        (60, 255, 140, 30),   # green
-        (255, 60, 120, 30),   # pink
-        (60, 120, 255, 30),   # blue
-        (255, 200, 60, 25),   # gold
-        (180, 60, 255, 25),   # purple
-        (0, 220, 255, 25),    # cyan
-    ]
-    # Use fixed seed for consistent look
-    rng = random.Random(42)
-    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    for _ in range(count):
-        cx = rng.randint(0, w)
-        cy = rng.randint(0, h)
-        r = rng.randint(120, 400)
-        color = rng.choice(colors)
-        glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        gdraw = ImageDraw.Draw(glow)
-        gdraw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
-        glow = glow.filter(ImageFilter.GaussianBlur(r // 3))
-        layer = Image.alpha_composite(layer, glow)
-    canvas.alpha_composite(layer)
+def _rounded_rect(draw, box, radius, fill=None, outline=None, width=1):
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
 
 
-def _draw_grid_lines(canvas, color=(60, 255, 140, 10), step=80):
-    """Draws subtle tech grid lines over the canvas."""
-    w, h = canvas.size
-    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ldraw = ImageDraw.Draw(layer)
-    for x in range(0, w, step):
-        ldraw.line([(x, 0), (x, h)], fill=color, width=1)
-    for y in range(0, h, step):
-        ldraw.line([(0, y), (w, y)], fill=color, width=1)
-    canvas.alpha_composite(layer)
+def _drop_shadow(canvas, box, radius, offset=(0, 10), blur=22, opacity=140):
+    """Draws a soft blurred shadow behind a card box for pseudo-3D depth."""
+    x0, y0, x1, y1 = box
+    ox, oy = offset
+    shadow_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    sdraw = ImageDraw.Draw(shadow_layer)
+    sdraw.rounded_rectangle((x0 + ox, y0 + oy, x1 + ox, y1 + oy), radius=radius, fill=(0, 0, 0, opacity))
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(blur))
+    canvas.alpha_composite(shadow_layer)
 
 
-def _glow_ellipse(canvas, cx, cy, rx, ry, color, alpha_max=120, blur=40):
-    """Draws a soft glowing ellipse."""
-    w, h = canvas.size
-    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ldraw = ImageDraw.Draw(layer)
-    ldraw.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=color + (alpha_max,))
-    layer = layer.filter(ImageFilter.GaussianBlur(blur))
-    canvas.alpha_composite(layer)
+def _bevel_card(draw, box, radius, fill, top_light, bottom_dark, width=3):
+    """
+    Clean card fill + crisp rounded-corner outline. (Earlier versions tried
+    to fake a 3D bevel using PIL's arc() drawn across the ENTIRE card
+    bounding box, which stretched into ugly, distracting curved lines
+    across large cards instead of looking like a subtle corner highlight -
+    removed in favor of this simpler, cleaner look.)
+    """
+    _rounded_rect(draw, box, radius, fill=fill, outline=top_light, width=width)
 
 
-def _neon_border_card(canvas, box, radius, fill, border_color, border_width=3, glow_blur=12, glow_alpha=180):
-    """Draws a card with a glowing neon border — the signature premium 3D look."""
-    x0, y0, x1, y1 = [int(v) for v in box]
-    w, h = canvas.size
-
-    # 1. Outer glow
-    glow_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    gdraw = ImageDraw.Draw(glow_layer)
-    gdraw.rounded_rectangle((x0, y0, x1, y1), radius=radius,
-                             outline=border_color + (glow_alpha,), width=border_width + 4)
-    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(glow_blur))
-    canvas.alpha_composite(glow_layer)
-
-    # 2. Card fill
-    draw = ImageDraw.Draw(canvas)
-    draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=fill + (230,))
-
-    # 3. Crisp border
-    draw.rounded_rectangle((x0, y0, x1, y1), radius=radius,
-                            outline=border_color, width=border_width)
-
-    # 4. Glass shine strip on top
-    shine = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    shine_draw = ImageDraw.Draw(shine)
-    shine_h = (y1 - y0) // 3
-    shine_draw.polygon([
-        (x0 + radius, y0),
-        (x1 - radius, y0),
-        (x1 - radius, y0 + shine_h),
-        (x0 + radius, y0 + shine_h // 2),
-    ], fill=(255, 255, 255, 22))
-    canvas.alpha_composite(shine)
+def _glass_shine(canvas, box, radius, opacity=34):
+    """Adds a soft diagonal highlight band across the top of a card, like
+    light glinting off glass — reinforces the premium/3D feel."""
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    shine_layer = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    sdraw = ImageDraw.Draw(shine_layer)
+    sdraw.polygon(
+        [(0, 0), (w * 0.55, 0), (w * 0.25, h * 0.5), (0, h * 0.5)],
+        fill=(255, 255, 255, opacity)
+    )
+    shine_layer = shine_layer.filter(ImageFilter.GaussianBlur(6))
+    mask = Image.new("L", (int(w), int(h)), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w, h), radius=radius, fill=255)
+    # Clip the shine to the card's rounded shape before compositing, so it
+    # never spills outside the card's corners.
+    clipped_shine = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    clipped_shine.paste(shine_layer, (0, 0), mask)
+    composed = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    composed.paste(clipped_shine, (int(x0), int(y0)), clipped_shine)
+    canvas.alpha_composite(composed)
 
 
-def _glow_text(canvas, xy, text, size, bold=True, fill=WHITE, glow_color=NEON_GREEN, glow_r=10, anchor="la"):
-    """Draws text with a beautiful neon glow behind it."""
-    font = _font(size, bold=bold)
-    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    d.text(xy, text, font=font, fill=glow_color + (200,), anchor=anchor)
-    layer = layer.filter(ImageFilter.GaussianBlur(glow_r))
-    canvas.alpha_composite(layer)
-    d2 = ImageDraw.Draw(canvas)
+def _pro_ribbon(canvas, top_right_xy, accent):
+    # Small diagonal 'PRO' ribbon badge in a card's top-right corner.
+    x, y = top_right_xy
+    ribbon = Image.new("RGBA", (170, 170), (0, 0, 0, 0))
+    rdraw = ImageDraw.Draw(ribbon)
+    rdraw.polygon([(30, 0), (170, 0), (170, 140), (140, 170), (0, 40)], fill=accent + (235,))
+    ribbon = ribbon.rotate(0)
+    font = _font(FONT_BOLD, 24)
+    rdraw.text((100, 45), "PRO", font=font, fill=(10, 15, 12), anchor="mm")
+    canvas.alpha_composite(ribbon, (int(x) - 170, int(y)))
+
+
+def _draw_dots(draw, center_x, y, count, filled_count, color, radius=7, spacing=22):
+    """Draws a row of small dots, first `filled_count` filled, rest hollow — used as an intensity meter."""
+    total_w = spacing * (count - 1)
+    start_x = center_x - total_w / 2
+    for i in range(count):
+        cx = start_x + i * spacing
+        if i < filled_count:
+            draw.ellipse((cx - radius, y - radius, cx + radius, y + radius), fill=color)
+        else:
+            draw.ellipse((cx - radius, y - radius, cx + radius, y + radius), outline=(80, 90, 88), width=2)
+
+
+def _draw_bull_icon(draw, cx, cy, size, color):
+    """Geometric bull silhouette: rounded body, curved horns, sturdy legs, upward horn tips for a 'bullish' read."""
+    body_w, body_h = size, size * 0.48
+    body_top = cy - body_h * 0.3
+    body_bottom = cy + body_h * 0.5
+
+    # body (rounded)
+    draw.rounded_rectangle(
+        (cx - body_w / 2, body_top, cx + body_w / 2, body_bottom),
+        radius=body_h * 0.5, outline=color, width=5
+    )
+
+    # head (small circle above body, left side)
+    head_r = size * 0.16
+    head_cx = cx - body_w * 0.32
+    head_cy = body_top - head_r * 0.6
+    draw.ellipse((head_cx - head_r, head_cy - head_r, head_cx + head_r, head_cy + head_r),
+                 outline=color, width=5)
+
+    # horns (curved arcs sweeping upward and outward from the head)
+    horn_r = size * 0.20
+    draw.arc((head_cx - horn_r * 1.6, head_cy - horn_r * 1.7,
+              head_cx + horn_r * 0.4, head_cy + horn_r * 0.3), 200, 320, fill=color, width=5)
+    draw.arc((head_cx - horn_r * 0.4, head_cy - horn_r * 1.9,
+              head_cx + horn_r * 1.6, head_cy + horn_r * 0.1), 220, 340, fill=color, width=5)
+
+    # legs
+    for lx in (-0.32, -0.12, 0.12, 0.32):
+        draw.line((cx + lx * body_w, body_bottom - 4, cx + lx * body_w, body_bottom + size * 0.22),
+                   fill=color, width=5)
+
+    # upward tail flick (bullish motion cue)
+    draw.line((cx + body_w * 0.48, cy, cx + body_w * 0.72, cy - size * 0.28), fill=color, width=5)
+    draw.line((cx + body_w * 0.72, cy - size * 0.28, cx + body_w * 0.62, cy - size * 0.22), fill=color, width=5)
+    draw.line((cx + body_w * 0.72, cy - size * 0.28, cx + body_w * 0.80, cy - size * 0.14), fill=color, width=5)
+
+
+def _draw_bear_icon(draw, cx, cy, size, color):
+    """Geometric bear silhouette: rounder heavy body, round ears, downward motion cue for 'bearish' read."""
+    body_w, body_h = size * 1.05, size * 0.52
+    body_top = cy - body_h * 0.25
+    body_bottom = cy + body_h * 0.55
+
+    # body (rounded, heavier/rounder than the bull)
+    draw.rounded_rectangle(
+        (cx - body_w / 2, body_top, cx + body_w / 2, body_bottom),
+        radius=body_h * 0.55, outline=color, width=5
+    )
+
+    # head (rounder, centered-left)
+    head_r = size * 0.19
+    head_cx = cx - body_w * 0.28
+    head_cy = body_top - head_r * 0.5
+    draw.ellipse((head_cx - head_r, head_cy - head_r, head_cx + head_r, head_cy + head_r),
+                 outline=color, width=5)
+
+    # small round ears
+    ear_r = size * 0.09
+    draw.ellipse((head_cx - head_r * 0.7 - ear_r, head_cy - head_r * 0.9 - ear_r,
+                  head_cx - head_r * 0.7 + ear_r, head_cy - head_r * 0.9 + ear_r), outline=color, width=4)
+    draw.ellipse((head_cx + head_r * 0.7 - ear_r, head_cy - head_r * 0.9 - ear_r,
+                  head_cx + head_r * 0.7 + ear_r, head_cy - head_r * 0.9 + ear_r), outline=color, width=4)
+
+    # snout
+    draw.ellipse((head_cx - head_r * 0.55, head_cy + head_r * 0.15,
+                  head_cx + head_r * 0.75, head_cy + head_r * 0.85), outline=color, width=4)
+
+    # legs (heavier stance)
+    for lx in (-0.34, -0.12, 0.12, 0.34):
+        draw.line((cx + lx * body_w, body_bottom - 4, cx + lx * body_w, body_bottom + size * 0.2),
+                   fill=color, width=6)
+
+    # downward motion cue (bearish claw-swipe / falling arrow)
+    draw.line((cx + body_w * 0.42, cy, cx + body_w * 0.66, cy + size * 0.30), fill=color, width=5)
+    draw.line((cx + body_w * 0.66, cy + size * 0.30, cx + body_w * 0.54, cy + size * 0.26), fill=color, width=5)
+    draw.line((cx + body_w * 0.66, cy + size * 0.30, cx + body_w * 0.70, cy + size * 0.14), fill=color, width=5)
+
+
+def _draw_wave(draw, box, color, amplitude_ratio=0.5, cycles=3.5):
+    """Draws a simple sine-like zig-zag wave inside the given box (volatility visual)."""
+    import math
+    x0, y0, x1, y1 = box
+    w = x1 - x0
+    h = y1 - y0
+    mid_y = y0 + h / 2
+    amp = (h / 2) * amplitude_ratio
+    points = []
+    steps = 60
+    for i in range(steps + 1):
+        t = i / steps
+        x = x0 + t * w
+        y = mid_y + amp * math.sin(t * cycles * 2 * math.pi)
+        points.append((x, y))
+    draw.line(points, fill=color, width=4, joint="curve")
+
+
+def _glow_text(img, xy, text, font, fill, glow_color, glow_radius=8, anchor="la"):
+    """Draws text with a soft neon glow behind it."""
+    txt_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(txt_layer)
+    d.text(xy, text, font=font, fill=glow_color, anchor=anchor)
+    txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(glow_radius))
+    img.alpha_composite(txt_layer)
+    d2 = ImageDraw.Draw(img)
     d2.text(xy, text, font=font, fill=fill, anchor=anchor)
 
 
-def _color_badge(canvas, box, radius, bg_color, border_color, text, text_size=28, text_color=WHITE):
-    """Draws a colorful 3D glossy pill/badge with text."""
-    _neon_border_card(canvas, box, radius, bg_color, border_color, border_width=2, glow_blur=8, glow_alpha=150)
-    draw = ImageDraw.Draw(canvas)
-    cx = (box[0] + box[2]) / 2
-    cy = (box[1] + box[3]) / 2
-    draw.text((cx, cy), text, font=_font(text_size, bold=True), fill=text_color, anchor="mm")
 
-
-def _confidence_bar(canvas, x0, y, bar_w, bar_h, confidence, accent_color):
-    """Draws a premium animated-style confidence bar with glow."""
-    draw = ImageDraw.Draw(canvas)
-    # Track background
-    draw.rounded_rectangle((x0, y, x0 + bar_w, y + bar_h), radius=bar_h // 2,
-                            fill=(30, 35, 60, 200))
-    # Fill amount
-    fill_w = max(bar_h, int(bar_w * confidence / 100))
-    draw.rounded_rectangle((x0, y, x0 + fill_w, y + bar_h), radius=bar_h // 2,
-                            fill=accent_color)
-    # Shine on fill
-    if fill_w > 20:
-        draw.line([(x0 + 10, y + bar_h // 3), (x0 + fill_w - 10, y + bar_h // 3)],
-                  fill=(255, 255, 255, 100), width=2)
-    # Glow on edges
-    glow_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    gdraw = ImageDraw.Draw(glow_layer)
-    gdraw.rounded_rectangle((x0, y, x0 + fill_w, y + bar_h), radius=bar_h // 2,
-                             outline=accent_color + (180,), width=3)
-    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(5))
-    canvas.alpha_composite(glow_layer)
-
-
-def _paste_chart(canvas, chart_path, box, border_color):
-    """Pastes chart with rounded clip and neon border."""
-    try:
-        chart = Image.open(chart_path).convert("RGB")
-    except Exception:
+def _glossy_3d_badge(canvas, box, radius, accent, glow=True):
+    """
+    Draws a small 'glossy button' badge: a vertical gradient fill (lighter
+    near the top, darker toward the bottom), a bright top highlight edge,
+    a dark bottom edge, and an optional soft outer glow — reads as a
+    raised, physical 3D button rather than a flat rectangle.
+    """
+    x0, y0, x1, y1 = box
+    w, h = int(x1 - x0), int(y1 - y0)
+    if w <= 0 or h <= 0:
         return
 
-    x0, y0, x1, y1 = [int(v) for v in box]
-    bw, bh = x1 - x0, y1 - y0
+    if glow:
+        glow_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        gdraw = ImageDraw.Draw(glow_layer)
+        gdraw.rounded_rectangle(box, radius=radius, outline=accent + (200,), width=6)
+        glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(6))
+        canvas.alpha_composite(glow_layer)
 
-    # Fit & crop
-    cr = chart.width / chart.height
-    br = bw / bh
-    if cr > br:
-        nh, nw = bh, int(bh * cr)
-    else:
-        nw, nh = bw, int(bw / cr)
-    chart = chart.resize((nw, nh), Image.LANCZOS)
-    left, top = (nw - bw) // 2, (nh - bh) // 2
-    chart = chart.crop((left, top, left + bw, top + bh))
+    # vertical gradient fill: dark base color rising to a lighter accent tint at top
+    grad = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    dark = (12, 16, 15)
+    for row in range(h):
+        t = row / max(1, h - 1)
+        r = int(dark[0] * t + accent[0] * (1 - t) * 0.22 + dark[0] * (1 - t) * 0.78)
+        g = int(dark[1] * t + accent[1] * (1 - t) * 0.22 + dark[1] * (1 - t) * 0.78)
+        b = int(dark[2] * t + accent[2] * (1 - t) * 0.22 + dark[2] * (1 - t) * 0.78)
+        ImageDraw.Draw(grad).line((0, row, w, row), fill=(r, g, b, 235))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w, h), radius=radius, fill=255)
+    canvas.paste(grad, (int(x0), int(y0)), mask)
 
-    # Rounded mask
-    mask = Image.new("L", (bw, bh), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw, bh), radius=22, fill=255)
-    canvas.paste(chart, (x0, y0), mask)
-
-    # Neon border around chart
-    glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    gdraw = ImageDraw.Draw(glow)
-    gdraw.rounded_rectangle((x0, y0, x1, y1), radius=22, outline=border_color + (160,), width=4)
-    glow = glow.filter(ImageFilter.GaussianBlur(6))
-    canvas.alpha_composite(glow)
     draw = ImageDraw.Draw(canvas)
-    draw.rounded_rectangle((x0, y0, x1, y1), radius=22, outline=border_color, width=2)
+    # crisp outline for definition
+    draw.rounded_rectangle(box, radius=radius, outline=accent, width=2)
+    return draw
 
 
-# ─── Main Signal Card ─────────────────────────────────────────────────────────
+def _draw_shield_icon(draw, cx, cy, size, color):
+    """Small 3D-style shield/checkmark icon (used as a confidence badge accent)."""
+    pts = [
+        (cx, cy - size * 0.55),
+        (cx + size * 0.42, cy - size * 0.32),
+        (cx + size * 0.42, cy + size * 0.12),
+        (cx, cy + size * 0.55),
+        (cx - size * 0.42, cy + size * 0.12),
+        (cx - size * 0.42, cy - size * 0.32),
+    ]
+    draw.polygon(pts, outline=color, width=3)
+    # checkmark inside
+    draw.line((cx - size * 0.2, cy, cx - size * 0.04, cy + size * 0.18), fill=color, width=4)
+    draw.line((cx - size * 0.04, cy + size * 0.18, cx + size * 0.24, cy - size * 0.16), fill=color, width=4)
+
+
+def _draw_trend_arrow_graphic(canvas, box, color):
+    """Draws a small upward-trending line-chart-with-arrow graphic, used as
+    a decorative accent in the header (top-right), echoing a 'stocks going
+    up' visual motif."""
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    layer = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    ldraw = ImageDraw.Draw(layer)
+
+    # jagged upward line
+    pts = [
+        (0, h * 0.85), (w * 0.18, h * 0.65), (w * 0.34, h * 0.75),
+        (w * 0.52, h * 0.40), (w * 0.70, h * 0.50), (w * 0.88, h * 0.12),
+    ]
+    ldraw.line(pts, fill=color + (255,), width=5, joint="curve")
+
+    # arrowhead at the end
+    ax, ay = w * 0.88, h * 0.12
+    ldraw.polygon([(ax, ay), (ax - w * 0.14, ay), (ax, ay - h * 0.0)], fill=color + (255,))
+    ldraw.polygon([
+        (ax, ay - h * 0.02),
+        (ax - w * 0.16, ay + h * 0.06),
+        (ax - w * 0.04, ay + h * 0.18),
+    ], fill=color + (255,))
+
+    layer = layer.filter(ImageFilter.GaussianBlur(0.4))
+    canvas.alpha_composite(layer, (int(x0), int(y0)))
+
+
+def _draw_header_texture(canvas):
+    """Adds a very subtle circuit/grid texture across the top header band
+    for a high-tech premium feel, without being visually noisy."""
+    w = CANVAS_W
+    h = 260
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ldraw = ImageDraw.Draw(layer)
+    line_color = (60, 255, 140, 14)
+    step = 60
+    for x in range(0, w, step):
+        ldraw.line((x, 0, x, h), fill=line_color, width=1)
+    for y in range(0, h, step):
+        ldraw.line((0, y, w, y), fill=line_color, width=1)
+    canvas.alpha_composite(layer, (0, 0))
+
+
+def _paste_chart(canvas, chart_bgr_path_or_img, box):
+    """Pastes chart image (fit) into the given box with rounded mask."""
+    from PIL import Image as PILImage
+    if isinstance(chart_bgr_path_or_img, str):
+        chart = PILImage.open(chart_bgr_path_or_img).convert("RGB")
+    else:
+        chart = chart_bgr_path_or_img.convert("RGB")
+
+    bx0, by0, bx1, by1 = box
+    bw, bh = bx1 - bx0, by1 - by0
+
+    # Fit chart into box maintaining aspect ratio, center-crop if needed
+    chart_ratio = chart.width / chart.height
+    box_ratio = bw / bh
+
+    if chart_ratio > box_ratio:
+        new_h = bh
+        new_w = int(bh * chart_ratio)
+    else:
+        new_w = bw
+        new_h = int(bw / chart_ratio)
+
+    chart_resized = chart.resize((new_w, new_h), Image.LANCZOS)
+
+    # center crop
+    left = (new_w - bw) // 2
+    top = (new_h - bh) // 2
+    chart_cropped = chart_resized.crop((left, top, left + bw, top + bh))
+
+    mask = Image.new("L", (bw, bh), 0)
+    mdraw = ImageDraw.Draw(mask)
+    mdraw.rounded_rectangle((0, 0, bw, bh), radius=28, fill=255)
+
+    canvas.paste(chart_cropped, (bx0, by0), mask)
+    return chart_cropped, (bx0, by0, bw, bh)
+
 
 def render_result_card(
     chart_image_path,
-    prediction,
+    prediction,          # dict from predict_next_candle()
     pair_name="Chart Analysis",
     timeframe_label="1 MIN",
     trade_duration_label=None,
     utc_offset_hours=5,
     logo_path=None,
     output_path="/tmp/mi_nexus_result.png",
-    candles=None,
+    candles=None,        # optional: Candle objects (currently unused for rendering, kept for API compatibility)
 ):
-    """Renders a premium 3D colorful signal card image."""
-    canvas = _gradient_bg(CW, CH, BG_DARK, BG_MID)
-    canvas = canvas.convert("RGBA")
+    canvas = _vertical_gradient(CANVAS_W, CANVAS_H, BG_TOP, BG_BOTTOM).convert("RGBA")
+    _draw_header_texture(canvas)
+    draw = ImageDraw.Draw(canvas)
 
-    direction   = prediction.get("direction", "UP")
-    confidence  = prediction.get("confidence", 70)
-    strength    = prediction.get("strength", "MODERATE")
-    is_up       = direction == "UP"
-    accent      = NEON_GREEN if is_up else NEON_RED
-    accent2     = NEON_CYAN  if is_up else NEON_PURPLE
+    direction = prediction["direction"]
+    confidence = prediction["confidence"]
+    strength = prediction.get("strength", "MODERATE")
+    patterns = prediction["patterns"]
+    is_up = direction == "UP"
+    accent = NEON_GREEN if is_up else NEON_RED
 
-    # ── 1. Colorful Bokeh Background ──────────────────────────────────────────
-    _draw_colorful_bokeh(canvas, count=16)
-    _draw_grid_lines(canvas, color=(100, 140, 255, 8))
+    sub_font = _font(FONT_REG, 28)
 
-    # ── 2. Header Band ────────────────────────────────────────────────────────
-    header_h = 230
-    header_layer = Image.new("RGBA", (CW, header_h), (0, 0, 0, 0))
-    hl_draw = ImageDraw.Draw(header_layer)
-    for y in range(header_h):
-        t = y / max(1, header_h - 1)
-        a = int(200 * (1 - t))
-        hl_draw.line([(0, y), (CW, y)], fill=(10, 14, 40, a))
-    canvas.alpha_composite(header_layer)
+    # ---------------- Header: big logo (left) + MI NEXUS wordmark (right) ----------------
+    header_top = 34
+    logo_size = 168
+    logo_x = 36
 
-    # Logo
-    logo_size = 160
-    logo_x, logo_y = 34, 30
     if logo_path and os.path.exists(logo_path):
         logo = Image.open(logo_path).convert("RGBA")
-        logo = logo.resize((logo_size, logo_size), Image.LANCZOS)
-        _glow_ellipse(canvas, logo_x + logo_size // 2, logo_y + logo_size // 2,
-                      logo_size // 2 + 30, logo_size // 2 + 30, NEON_GREEN, alpha_max=60, blur=30)
-        canvas.alpha_composite(logo, (logo_x, logo_y))
 
-    # Wordmark
-    tx = logo_x + logo_size + 24
-    _glow_text(canvas, (tx, logo_y + 10), "MI NEXUS", 82, bold=True,
-               fill=WHITE, glow_color=accent, glow_r=14, anchor="la")
+        # Clean soft radial glow behind the logo (no visible ring edge -
+        # a smooth circular gradient that fades to fully transparent).
+        glow_pad = 46
+        glow_size = logo_size + glow_pad * 2
+        glow = Image.new("RGBA", (glow_size, glow_size), (0, 0, 0, 0))
+        gdraw = ImageDraw.Draw(glow)
+        max_r = glow_size / 2
+        steps = 40
+        for i in range(steps, 0, -1):
+            r = max_r * (i / steps)
+            alpha = int(70 * (1 - i / steps) ** 2)  # fades smoothly outward, softest at the edge
+            gdraw.ellipse(
+                (max_r - r, max_r - r, max_r + r, max_r + r),
+                fill=NEON_GREEN + (alpha,)
+            )
+        glow = glow.filter(ImageFilter.GaussianBlur(18))
+        canvas.alpha_composite(glow, (logo_x - glow_pad, header_top - glow_pad))
+
+        logo_resized = logo.resize((logo_size, logo_size), Image.LANCZOS)
+        canvas.alpha_composite(logo_resized, (logo_x, header_top))
+
+    text_x = logo_x + logo_size + 28
+    wordmark_font = _font(FONT_BOLD, 76)
+    _glow_text(canvas, (text_x, header_top + 14), "MI NEXUS", wordmark_font,
+               fill=(255, 255, 255), glow_color=NEON_GREEN, glow_radius=7, anchor="la")
     draw = ImageDraw.Draw(canvas)
-    draw.text((tx + 4, logo_y + 106), "PRO v20  ★  ANALYZE · PREDICT · PROFIT",
-              font=_font(26), fill=accent2, anchor="la")
+    draw.text((text_x + 4, header_top + 100), "ANALYZE • PREDICT • PROFIT",
+              font=sub_font, fill=SOFT_GREEN, anchor="la")
 
-    # Pair name pill
-    y_cursor = header_h + 10
-    _color_badge(canvas, (CW // 2 - 280, y_cursor, CW // 2 + 280, y_cursor + 60),
-                 radius=30, bg_color=CARD_BG, border_color=accent,
-                 text=f"★  {pair_name.upper()}  ★", text_size=34, text_color=WHITE)
-    y_cursor += 78
-
-    # ── 3. Direction Hero Card ────────────────────────────────────────────────
-    dir_card_box = (30, y_cursor, CW - 30, y_cursor + 140)
-    dir_bg = (10, 40, 20) if is_up else (40, 10, 20)
-    _neon_border_card(canvas, dir_card_box, 36, dir_bg, accent,
-                      border_width=4, glow_blur=20, glow_alpha=220)
-
-    arrow_txt  = "▲  CALL / BUY  — PRICE GOING UP ▲" if is_up else "▼  PUT / SELL  — PRICE GOING DOWN ▼"
-    _glow_text(canvas, (CW // 2, y_cursor + 70), arrow_txt, 48, bold=True,
-               fill=WHITE, glow_color=accent, glow_r=12, anchor="mm")
-    y_cursor += 158
-
-    # Confidence Bar
+    # Decorative upward trend-arrow graphic, top-right of the header
+    _draw_trend_arrow_graphic(canvas, (CANVAS_W - 190, header_top + 10, CANVAS_W - 40, header_top + 90), NEON_GREEN)
     draw = ImageDraw.Draw(canvas)
-    draw.text((CW // 2, y_cursor + 8), f"CONFIDENCE: {confidence}%",
-              font=_font(30, bold=True), fill=accent, anchor="ma")
-    y_cursor += 40
-    _confidence_bar(canvas, 60, y_cursor, CW - 120, 36, confidence, accent)
-    y_cursor += 56
 
-    # Strength badge
-    str_colors = {
-        "VERY STRONG": (NEON_GOLD,    (50, 40, 0)),
-        "STRONG":      (NEON_GREEN,   (0, 40, 20)),
-        "MODERATE":    (NEON_CYAN,    (0, 30, 40)),
-        "WEAK":        (NEON_PURPLE,  (30, 0, 40)),
-    }
-    s_border, s_bg = str_colors.get(strength, (SILVER, CARD_BG))
-    _color_badge(canvas, (CW // 2 - 200, y_cursor, CW // 2 + 200, y_cursor + 52),
-                 radius=26, bg_color=s_bg, border_color=s_border,
-                 text=f"⚡ SIGNAL STRENGTH: {strength}", text_size=28, text_color=WHITE)
-    y_cursor += 70
+    y_cursor = header_top + logo_size + 4
 
-    # ── 4. Chart Window ───────────────────────────────────────────────────────
-    chart_box = (30, y_cursor, CW - 30, y_cursor + 820)
-    _paste_chart(canvas, chart_image_path, chart_box, accent)
+    pro_tag_font = _font(FONT_BOLD, 20)
+    pro_tag_text = "⚙ V5 PRO ENGINE"
+    pro_tag_w = draw.textlength(pro_tag_text, font=pro_tag_font)
+    pro_tag_box = (CANVAS_W // 2 - pro_tag_w / 2 - 16, y_cursor,
+                   CANVAS_W // 2 + pro_tag_w / 2 + 16, y_cursor + 32)
+    _glossy_3d_badge(canvas, pro_tag_box, radius=16, accent=GOLD, glow=False)
+    draw = ImageDraw.Draw(canvas)
+    draw.text((CANVAS_W // 2, y_cursor + 16), pro_tag_text, font=pro_tag_font, fill=GOLD, anchor="mm")
+    y_cursor += 46
 
-    # Direction badge overlay on chart
-    dir_badge_box = (CW - 340, y_cursor + 20, CW - 40, y_cursor + 100)
-    _color_badge(canvas, dir_badge_box, 20,
-                 bg_color=(10, 40, 20) if is_up else (40, 10, 20),
-                 border_color=accent,
-                 text="▲ UP" if is_up else "▼ DOWN", text_size=36, text_color=WHITE)
+    # Pair name badge — 3D glossy pill
+    pair_font = _font(FONT_BOLD, 32)
+    pair_text = f"★ {pair_name} ★"
+    pair_w = draw.textlength(pair_text, font=pair_font)
+    badge_pad = 24
+    badge_box = (CANVAS_W // 2 - pair_w / 2 - badge_pad, y_cursor,
+                 CANVAS_W // 2 + pair_w / 2 + badge_pad, y_cursor + 54)
+    _glossy_3d_badge(canvas, badge_box, radius=27, accent=SOFT_GREEN)
+    draw = ImageDraw.Draw(canvas)
+    draw.text((CANVAS_W // 2, y_cursor + 27), pair_text, font=pair_font, fill=(255, 255, 255), anchor="mm")
+    y_cursor += 74
 
-    y_cursor += 838
+    # ---------------- Chart Card (3D depth: shadow + bevel + glass shine) ----------------
+    card_top = y_cursor
+    card_bottom = card_top + 840
+    card_box = (40, card_top, CANVAS_W - 40, card_bottom)
+    _drop_shadow(canvas, card_box, radius=32, offset=(0, 14), blur=26, opacity=150)
+    draw = ImageDraw.Draw(canvas)
+    _bevel_card(draw, card_box, radius=32, fill=CARD_BG,
+                top_light=(120, 255, 180), bottom_dark=(0, 0, 0), width=4)
+    draw.rounded_rectangle(card_box, radius=32, outline=CARD_BORDER, width=2)
+    _glass_shine(canvas, card_box, radius=32, opacity=26)
+    draw = ImageDraw.Draw(canvas)
+    _pro_ribbon(canvas, (CANVAS_W - 40, card_top), accent)
+    draw = ImageDraw.Draw(canvas)
 
-    # ── 5. Technical Details Card ─────────────────────────────────────────────
-    tech      = prediction.get("technical_indicators", {})
-    choppiness = prediction.get("choppiness", 0)
-    bias_val  = prediction.get("trend_bias", 0)
+    chart_box = (70, card_top + 25, CANVAS_W - 70, card_bottom - 210)
+    _paste_chart(canvas, chart_image_path, chart_box)
+    draw = ImageDraw.Draw(canvas)  # refresh draw handle after paste
 
-    if choppiness < 0.3:
-        cond_label, cond_color = "✅ CLEAN TREND", NEON_GREEN
-    elif choppiness < 0.6:
-        cond_label, cond_color = "⚠️ MIXED MARKET", NEON_GOLD
-    else:
-        cond_label, cond_color = "❌ CHOPPY", NEON_RED
+    # Direction arrow marker overlay (top-right of chart box) — 3D glossy badge
+    arrow_symbol = "▲ UP" if is_up else "▼ DOWN"
+    marker_box = (chart_box[2] - 240, chart_box[1] + 18, chart_box[2] - 18, chart_box[1] + 90)
+    _glossy_3d_badge(canvas, marker_box, radius=18, accent=accent)
+    draw = ImageDraw.Draw(canvas)
+    draw.text(((marker_box[0] + marker_box[2]) // 2, (marker_box[1] + marker_box[3]) // 2 - 2),
+               arrow_symbol, font=_font(FONT_BOLD, 34), fill=(255, 255, 255), anchor="mm")
 
-    bias_label = "BULLISH 🐂" if bias_val > 0.05 else ("BEARISH 🐻" if bias_val < -0.05 else "FLAT ↔")
-    bias_color = NEON_GREEN if bias_val > 0.05 else (NEON_RED if bias_val < -0.05 else SILVER)
+    # Strength badge (top-left of chart box) — 3D glossy badge
+    strength_font = _font(FONT_BOLD, 24)
+    strength_text = f"{strength}"
+    strength_w = draw.textlength(strength_text, font=strength_font)
+    sbadge_box = (chart_box[0] + 18, chart_box[1] + 18, chart_box[0] + 56 + strength_w + 30, chart_box[1] + 62)
+    _glossy_3d_badge(canvas, sbadge_box, radius=14, accent=accent)
+    draw = ImageDraw.Draw(canvas)
+    dot_cx = sbadge_box[0] + 22
+    dot_cy = (sbadge_box[1] + sbadge_box[3]) / 2
+    # small glowing orb dot instead of a flat bullet character
+    draw.ellipse((dot_cx - 7, dot_cy - 7, dot_cx + 7, dot_cy + 7), fill=accent)
+    draw.ellipse((dot_cx - 3, dot_cy - 5, dot_cx + 1, dot_cy - 1), fill=(255, 255, 255, 200))
+    draw.text((dot_cx + 16, dot_cy), strength_text, font=strength_font, fill=(255, 255, 255), anchor="lm")
+
+    # ---------------- Prediction Info Row (inside card) ----------------
+    info_y = chart_box[3] + 20
+    label_font = _font(FONT_BOLD, 40)
+    small_font = _font(FONT_REG, 26)
+
+    _glow_text(canvas, (CANVAS_W // 2, info_y), f"NEXT CANDLE: {direction}",
+               label_font, fill=(255, 255, 255), glow_color=accent, glow_radius=6, anchor="ma")
+    draw = ImageDraw.Draw(canvas)
+    info_y += 58
+
+    # Confidence bar (with glass shine strip + soft glow for a premium feel)
+    bar_w = CANVAS_W - 200
+    bar_x0 = 100
+    bar_y0 = info_y
+    bar_h = 30
+    _drop_shadow(canvas, (bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h), radius=15,
+                 offset=(0, 4), blur=10, opacity=90)
+    draw = ImageDraw.Draw(canvas)
+    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h), radius=15,
+                  fill=(28, 38, 36), outline=(55, 75, 70), width=1)
+    fill_w = max(bar_h, int(bar_w * (confidence / 100)))
+    _rounded_rect(draw, (bar_x0, bar_y0, bar_x0 + fill_w, bar_y0 + bar_h), radius=15, fill=accent)
+    # thin bright highlight line near the top of the fill for a glassy 3D look
+    if fill_w > 16:
+        draw.line((bar_x0 + 8, bar_y0 + 6, bar_x0 + fill_w - 8, bar_y0 + 6),
+                  fill=tuple(min(255, c + 90) for c in accent), width=2)
+    conf_text = f"CONFIDENCE: {confidence}%"
+    conf_text_w = draw.textlength(conf_text, font=small_font)
+    shield_size = 22
+    total_w = shield_size + 10 + conf_text_w
+    shield_cx = CANVAS_W // 2 - total_w / 2 + shield_size / 2
+    shield_cy = bar_y0 + bar_h + 32
+    _draw_shield_icon(draw, shield_cx, shield_cy, shield_size, accent)
+    draw.text((shield_cx + shield_size / 2 + 10, shield_cy), conf_text,
+              font=small_font, fill=SILVER, anchor="lm")
+
+    # ---------------- Details Card (3D depth) — two-column layout ----------------
+    details_top = card_bottom + 24
+    details_bottom = details_top + 340
+    details_box = (40, details_top, CANVAS_W - 40, details_bottom)
+    _drop_shadow(canvas, details_box, radius=28, offset=(0, 10), blur=20, opacity=120)
+    draw = ImageDraw.Draw(canvas)
+    _bevel_card(draw, details_box, radius=28, fill=CARD_BG,
+                top_light=(90, 130, 115), bottom_dark=(0, 0, 0), width=3)
+    draw.rounded_rectangle(details_box, radius=28, outline=(50, 70, 65), width=1)
+
+    col_split_x = 40 + (CANVAS_W - 80) * 0.48
+    left_x = 68
+    right_x = col_split_x + 30
+    dy_left = details_top + 24
+    dy_right = details_top + 24
+    row_font = _font(FONT_REG, 26)
+    row_font_b = _font(FONT_BOLD, 26)
+
+    # --- Left column: metadata rows ---
+    left_label_max_w = col_split_x - left_x - 10
+
+    def _left_row(label, value, value_color=(255, 255, 255)):
+        nonlocal dy_left
+        draw.text((left_x, dy_left), label, font=row_font, fill=SILVER)
+        dy_left += 32
+        draw.text((left_x, dy_left), value, font=row_font_b, fill=value_color)
+        dy_left += 46
+
+    _left_row("Timeframe:", timeframe_label)
+    if trade_duration_label:
+        _left_row("Trade Duration:", trade_duration_label, GOLD)
 
     tz = timezone(timedelta(hours=utc_offset_hours))
-    time_str = datetime.now(tz).strftime("%H:%M:%S")
+    now_str = datetime.now(tz).strftime("%H:%M:%S")
+    _left_row(f"Time (UTC{'+' if utc_offset_hours >= 0 else ''}{utc_offset_hours}):", now_str)
 
-    detail_card_box = (30, y_cursor, CW - 30, y_cursor + 320)
-    _neon_border_card(canvas, detail_card_box, 28, CARD_BG2, NEON_BLUE,
-                      border_width=2, glow_blur=10, glow_alpha=120)
-    draw = ImageDraw.Draw(canvas)
+    bias_val = prediction.get("trend_bias", 0)
+    bias_label = "Bullish" if bias_val > 0.05 else ("Bearish" if bias_val < -0.05 else "Flat")
+    _left_row("Trend Bias:", bias_label, NEON_GREEN if bias_val > 0.05 else (NEON_RED if bias_val < -0.05 else SILVER))
 
-    dx, dy = 60, y_cursor + 22
-    lbl_f = _font(26)
-    val_f = _font(28, bold=True)
+    choppiness = prediction.get("choppiness", 0)
+    if choppiness < 0.3:
+        condition_label, condition_color = "Clean Trend", NEON_GREEN
+    elif choppiness < 0.6:
+        condition_label, condition_color = "Mixed", GOLD
+    else:
+        condition_label, condition_color = "Choppy", NEON_RED
+    dy_left += 6
+    draw.text((left_x, dy_left), "Market Condition:", font=row_font, fill=SILVER)
+    dy_left += 32
+    draw.text((left_x, dy_left), condition_label, font=row_font_b, fill=condition_color)
+    dy_left += 46
 
-    # Row helper
-    def row(label, value, value_color=WHITE):
-        nonlocal dy
-        draw.text((dx, dy), label, font=lbl_f, fill=SILVER, anchor="la")
-        draw.text((CW // 2, dy), value, font=val_f, fill=value_color, anchor="la")
-        dy += 46
+    # Divider line between the two columns
+    draw.line((col_split_x, details_top + 20, col_split_x, details_bottom - 20),
+              fill=(50, 70, 65), width=2)
 
-    row("⏱ Timeframe:", timeframe_label)
-    if trade_duration_label:
-        row("⏳ Trade Duration:", trade_duration_label, NEON_GOLD)
-    row(f"🕐 Signal Time (UTC{'+' if utc_offset_hours >= 0 else ''}{utc_offset_hours}):", time_str)
-    row("📈 Market Condition:", cond_label, cond_color)
-    row("📊 Trend Bias:", bias_label, bias_color)
+    # --- Right column: Patterns Detected list ---
+    pat_header_font = _font(FONT_BOLD, 26)
+    draw.text((right_x, dy_right), "PATTERNS DETECTED:", font=pat_header_font, fill=SOFT_GREEN)
+    dy_right += 44
 
-    # RSI
-    rsi_val = tech.get("calculated_rsi")
-    if rsi_val is not None:
-        rsi_zone = "OVERBOUGHT 🔴" if rsi_val >= 70 else ("OVERSOLD 🟢" if rsi_val <= 30 else "NEUTRAL ⚪")
-        rsi_color = NEON_RED if rsi_val >= 70 else (NEON_GREEN if rsi_val <= 30 else SILVER)
-        row(f"📉 RSI ({rsi_val:.0f}):", rsi_zone, rsi_color)
-
-    y_cursor += 338
-
-    # ── 6. Patterns Card ──────────────────────────────────────────────────────
     breakdown = prediction.get("breakdown", [])
-    top_patterns = sorted(breakdown, key=lambda p: p["reliability"], reverse=True)[:6]
+    top_patterns = sorted(breakdown, key=lambda p: p["reliability"], reverse=True)[:7]
+    pat_font = _font(FONT_REG, 22)
+    rel_font = _font(FONT_REG, 19)
+    right_col_w = (CANVAS_W - 40) - right_x - 20
+    for p in top_patterns:
+        sig_symbol = "▲" if p["signal"] == "bullish" else ("▼" if p["signal"] == "bearish" else "●")
+        sig_color = NEON_GREEN if p["signal"] == "bullish" else (NEON_RED if p["signal"] == "bearish" else SILVER)
+        name = p["name"]
+        # Truncate long pattern names so they don't overflow the narrower column
+        max_chars = 22
+        if len(name) > max_chars:
+            name = name[:max_chars - 1] + "…"
+        line = f"{sig_symbol} {name}"
+        draw.text((right_x, dy_right), line, font=pat_font, fill=sig_color)
+        dy_right += 30
+        draw.text((right_x + 22, dy_right), f"{int(p['reliability'])}% reliability",
+                   font=rel_font, fill=SILVER)
+        dy_right += 34
 
-    if top_patterns:
-        pat_card_h = 50 + len(top_patterns) * 52
-        pat_card_box = (30, y_cursor, CW - 30, y_cursor + pat_card_h)
-        _neon_border_card(canvas, pat_card_box, 24, CARD_BG, NEON_PURPLE,
-                          border_width=2, glow_blur=8)
-        draw = ImageDraw.Draw(canvas)
-        draw.text((CW // 2, y_cursor + 26), "🕯️  PATTERNS DETECTED",
-                  font=_font(28, bold=True), fill=NEON_PURPLE, anchor="ma")
+    dy = max(dy_left, dy_right)
 
-        py = y_cursor + 62
-        pcol_w = (CW - 90) // 2
-        for i, p in enumerate(top_patterns):
-            col = i % 2
-            px = 60 + col * (pcol_w + 30)
-            sig = "▲" if p["signal"] == "bullish" else ("▼" if p["signal"] == "bearish" else "●")
-            sc = NEON_GREEN if p["signal"] == "bullish" else (NEON_RED if p["signal"] == "bearish" else SILVER)
-            name = p["name"][:24]
-            draw.text((px, py if col == 0 else py), f"{sig} {name}  ({int(p['reliability'])}%)",
-                      font=_font(24), fill=sc, anchor="la")
-            if col == 1:
-                py += 52
-        y_cursor += pat_card_h + 20
+    # ---------------- Two-Column Insight Cards: Market Sentiment + Volatility ----------------
+    insight_top = details_bottom + 24
+    insight_h = 260
+    col_gap = 20
+    col_w = (CANVAS_W - 80 - col_gap) / 2
 
-    # ── 7. AI Block ───────────────────────────────────────────────────────────
-    ai_result = prediction.get("ai_result")
-    if ai_result and "error" not in ai_result:
-        ai_dir  = ai_result.get("direction", "?")
-        ai_conf = ai_result.get("confidence", 0)
-        ai_agrees = prediction.get("ai_agrees")
-        ai_reasoning = prediction.get("ai_reasoning", ai_result.get("reasoning", ""))[:110]
+    sentiment_box = (40, insight_top, 40 + col_w, insight_top + insight_h)
+    volatility_box = (40 + col_w + col_gap, insight_top, CANVAS_W - 40, insight_top + insight_h)
 
-        agree_txt = "✅ AGREES" if ai_agrees else "⚠️ DIFFERS"
-        ai_card_box = (30, y_cursor, CW - 30, y_cursor + 180)
-        _neon_border_card(canvas, ai_card_box, 22, CARD_BG2, NEON_CYAN,
-                          border_width=2, glow_blur=8)
-        draw = ImageDraw.Draw(canvas)
-        draw.text((60, y_cursor + 22), "🤖 GROQ AI DEEP ANALYSIS",
-                  font=_font(28, bold=True), fill=NEON_CYAN, anchor="la")
-        draw.text((60, y_cursor + 72), f"Direction: {ai_dir} ({ai_conf:.0f}%) — {agree_txt}",
-                  font=_font(28, bold=True), fill=WHITE, anchor="la")
-        if ai_reasoning:
-            draw.text((60, y_cursor + 118), f'"{ai_reasoning}..."',
-                      font=_font(22), fill=SILVER, anchor="la")
-        y_cursor += 198
+    # --- Market Sentiment card (3D depth) ---
+    _drop_shadow(canvas, sentiment_box, radius=24, offset=(0, 8), blur=16, opacity=110)
+    draw = ImageDraw.Draw(canvas)
+    _bevel_card(draw, sentiment_box, radius=24, fill=CARD_BG,
+                top_light=tuple(min(255, c + 60) for c in accent), bottom_dark=(0, 0, 0), width=3)
+    draw.rounded_rectangle(sentiment_box, radius=24, outline=accent, width=1)
+    sc_cx = (sentiment_box[0] + sentiment_box[2]) / 2
+    label_font_sm = _font(FONT_BOLD, 22)
+    draw.text((sc_cx, sentiment_box[1] + 26), "MARKET SENTIMENT", font=label_font_sm, fill=accent, anchor="ma")
 
-    # ── 8. Tip Box ────────────────────────────────────────────────────────────
+    icon_cy = sentiment_box[1] + 105
+    if is_up:
+        _draw_bull_icon(draw, sc_cx, icon_cy, 100, accent)
+    else:
+        _draw_bear_icon(draw, sc_cx, icon_cy, 100, accent)
+
+    sentiment_label_font = _font(FONT_BOLD, 30)
+    sentiment_text = "BULLISH" if is_up else "BEARISH"
+    draw.text((sc_cx, sentiment_box[1] + 165), sentiment_text, font=sentiment_label_font, fill=accent, anchor="ma")
+
+    # Dot intensity meter reflecting confidence (out of 6 dots)
+    filled_dots = max(1, min(6, round((confidence - 50) / 50 * 6)))
+    _draw_dots(draw, sc_cx, sentiment_box[1] + 215, 6, filled_dots, accent)
+
+    # --- Volatility card (3D depth) ---
+    _drop_shadow(canvas, volatility_box, radius=24, offset=(0, 8), blur=16, opacity=110)
+    draw = ImageDraw.Draw(canvas)
+    _bevel_card(draw, volatility_box, radius=24, fill=CARD_BG,
+                top_light=(150, 255, 190), bottom_dark=(0, 0, 0), width=3)
+    draw.rounded_rectangle(volatility_box, radius=24, outline=NEON_GREEN, width=1)
+    vc_cx = (volatility_box[0] + volatility_box[2]) / 2
+    draw.text((vc_cx, volatility_box[1] + 26), "VOLATILITY", font=label_font_sm, fill=NEON_GREEN, anchor="ma")
+
+    wave_box = (volatility_box[0] + 24, volatility_box[1] + 65, volatility_box[2] - 24, volatility_box[1] + 140)
+    choppiness = prediction.get("choppiness", 0)
+    if choppiness < 0.3:
+        vol_label, vol_color, vol_dots, wave_cycles = "LOW", NEON_GREEN, 2, 2.0
+    elif choppiness < 0.6:
+        vol_label, vol_color, vol_dots, wave_cycles = "MEDIUM", GOLD, 4, 3.0
+    else:
+        vol_label, vol_color, vol_dots, wave_cycles = "HIGH", NEON_RED, 6, 4.5
+    _draw_wave(draw, wave_box, vol_color, amplitude_ratio=0.55, cycles=wave_cycles)
+
+    draw.text((vc_cx, volatility_box[1] + 165), vol_label, font=sentiment_label_font, fill=vol_color, anchor="ma")
+    _draw_dots(draw, vc_cx, volatility_box[1] + 215, 6, vol_dots, vol_color)
+
+    # ---------------- Tip Box ----------------
+    tip_top = insight_top + insight_h + 20
+    tip_bottom = tip_top + 70
+    tip_box = (40, tip_top, CANVAS_W - 40, tip_bottom)
+    _rounded_rect(draw, tip_box, radius=20, fill=CARD_BG, outline=(50, 70, 65), width=2)
+
     if confidence >= 85:
-        tip = "STRONG SIGNAL — Confirm entry before placing trade."
+        tip_text = "Strong setup — still confirm before entering."
     elif choppiness >= 0.6:
-        tip = "CHOPPY MARKET — Wait for a clearer pattern."
+        tip_text = "Choppy market — consider waiting this one out."
     else:
-        tip = "Wait for price confirmation before entering your trade."
+        tip_text = "Wait for confirmation before entering a trade."
 
-    tip_box = (30, y_cursor, CW - 30, y_cursor + 72)
-    _neon_border_card(canvas, tip_box, 22, (20, 18, 10), NEON_GOLD, border_width=2, glow_blur=6)
-    draw = ImageDraw.Draw(canvas)
-    draw.text((CW // 2, y_cursor + 36), f"💡 TIP: {tip}",
-              font=_font(26), fill=NEON_GOLD, anchor="mm")
-    y_cursor += 90
+    tip_font = _font(FONT_REG, 24)
+    tip_font_b = _font(FONT_BOLD, 24)
+    tip_x = 70
+    draw.text((tip_x, (tip_top + tip_bottom) / 2), "💡 TIP:", font=tip_font_b, fill=GOLD, anchor="lm")
+    tip_label_w = draw.textlength("💡 TIP:  ", font=tip_font_b)
+    draw.text((tip_x + tip_label_w, (tip_top + tip_bottom) / 2), tip_text, font=tip_font, fill=SILVER, anchor="lm")
 
-    # ── 9. Footer ─────────────────────────────────────────────────────────────
-    draw = ImageDraw.Draw(canvas)
-    draw.text((CW // 2, y_cursor + 28), "⚠ Educational analysis only — not financial advice",
-              font=_font(24), fill=(150, 155, 165), anchor="ma")
-    draw.text((CW // 2, y_cursor + 60), "MI NEXUS © Muslim Islam Network",
-              font=_font(26, bold=True), fill=NEON_GREEN, anchor="ma")
+    footer_y_start = tip_bottom + 30
 
-    final_h = y_cursor + 100
-    # Crop or extend to final height
-    if final_h < CH:
-        canvas = canvas.crop((0, 0, CW, final_h))
-    else:
-        extended = Image.new("RGBA", (CW, final_h), BG_DARK + (255,))
+    # ---------------- Footer ----------------
+    footer_font = _font(FONT_REG, 26)
+    draw.text((CANVAS_W // 2, footer_y_start + 30),
+              "⚠ Educational analysis only — not financial advice",
+              font=footer_font, fill=(140, 150, 150), anchor="ma")
+    draw.text((CANVAS_W // 2, footer_y_start + 60),
+              "MI NEXUS © Muslim Islam Network",
+              font=footer_font, fill=SOFT_GREEN, anchor="ma")
+
+    final_height = footer_y_start + 110
+    canvas = canvas.crop((0, 0, CANVAS_W, min(CANVAS_H, final_height) if final_height < CANVAS_H else CANVAS_H))
+    if final_height > CANVAS_H:
+        # extend canvas if content overflowed the default height
+        extended = Image.new("RGBA", (CANVAS_W, final_height), BG_BOTTOM + (255,))
         extended.paste(canvas, (0, 0))
         canvas = extended
 
     canvas.convert("RGB").save(output_path, quality=95)
     return output_path
-
-
-# ─── Menu Banner ──────────────────────────────────────────────────────────────
-
-def render_menu_banner(output_path="/tmp/mi_nexus_menu.png"):
-    """
-    Generates a stunning, colorful 3D banner image for the main menu.
-    Full of neon glows, colorful bokeh, and premium text.
-    """
-    W, H = 1080, 600
-    canvas = _gradient_bg(W, H, (5, 8, 25), (10, 6, 35))
-    canvas = canvas.convert("RGBA")
-
-    # Background bokeh
-    _draw_colorful_bokeh(canvas, count=20)
-    _draw_grid_lines(canvas, color=(80, 120, 255, 10))
-
-    # Big glow orbs
-    _glow_ellipse(canvas, W // 2, H // 2, 420, 260, (0, 140, 255), alpha_max=40, blur=80)
-    _glow_ellipse(canvas, 100, 80, 200, 160, (0, 255, 128), alpha_max=35, blur=60)
-    _glow_ellipse(canvas, W - 100, H - 80, 200, 160, (255, 60, 120), alpha_max=35, blur=60)
-
-    # Bottom colorful gradient bar
-    bar_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    bdraw = ImageDraw.Draw(bar_layer)
-    bar_colors = [(255, 60, 120), (180, 60, 255), (60, 120, 255), (0, 220, 255), (0, 255, 128), (255, 200, 60)]
-    seg_w = W // len(bar_colors)
-    for i, c in enumerate(bar_colors):
-        bdraw.rectangle((i * seg_w, H - 10, (i + 1) * seg_w, H), fill=c + (200,))
-    bar_layer = bar_layer.filter(ImageFilter.GaussianBlur(2))
-    canvas.alpha_composite(bar_layer)
-
-    # Main Title
-    _glow_text(canvas, (W // 2, H // 2 - 120), "MI NEXUS PRO", 100, bold=True,
-               fill=WHITE, glow_color=NEON_GREEN, glow_r=20, anchor="mm")
-
-    # Version badge
-    _color_badge(canvas, (W // 2 - 130, H // 2 - 50, W // 2 + 130, H // 2 + 10),
-                 radius=28, bg_color=CARD_BG, border_color=NEON_CYAN,
-                 text="VERSION 20", text_size=30, text_color=NEON_CYAN)
-
-    # Tagline
-    _glow_text(canvas, (W // 2, H // 2 + 65), "🏆  THE ULTIMATE TRADING AI BOT  🏆", 34, bold=False,
-               fill=(220, 230, 255), glow_color=NEON_PURPLE, glow_r=10, anchor="mm")
-
-    # Bottom stats row (colored badges)
-    badges = [
-        ("100+ PATTERNS", NEON_GREEN),
-        ("AI POWERED", NEON_CYAN),
-        ("GROQ VISION", NEON_PURPLE),
-        ("LIVE SIGNALS", NEON_GOLD),
-    ]
-    total_badge_w = len(badges) * 240 + (len(badges) - 1) * 16
-    bx_start = (W - total_badge_w) // 2
-    by = H // 2 + 120
-    for label, color in badges:
-        _color_badge(canvas, (bx_start, by, bx_start + 230, by + 52),
-                     radius=26, bg_color=CARD_BG2, border_color=color,
-                     text=label, text_size=24, text_color=color)
-        bx_start += 246
-
-    canvas.convert("RGB").save(output_path, quality=95)
-    return output_path
-
-
-# ─── WIN / LOSS Result Stamp ──────────────────────────────────────────────────
-
-def render_result_stamp(image_path, result_type):
-    """
-    Overlays a beautiful colorful WIN / LOSS stamp on an existing signal card.
-    result_type: 'win' or 'loss'
-    """
-    try:
-        img = Image.open(image_path).convert("RGBA")
-    except Exception:
-        return image_path
-
-    w, h = img.size
-    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-
-    if result_type.lower() == "win":
-        color      = NEON_GREEN
-        bg_tint    = (10, 60, 20, 120)
-        stamp_text = "✅  TRADE WIN!"
-        emoji_text = "🏆🎉🎊"
-    else:
-        color      = NEON_RED
-        bg_tint    = (60, 10, 20, 120)
-        stamp_text = "❌  TRADE LOST"
-        emoji_text = "💪📉⚠️"
-
-    # Semi-transparent color tint over entire image
-    draw.rectangle((0, 0, w, h), fill=bg_tint)
-
-    # Main stamp box — centered, rotated
-    font_big = _font(min(w // 8, 120), bold=True)
-    font_sub = _font(min(w // 14, 60), bold=False)
-
-    txt_w_approx = w * 0.75
-    box_h = h // 6
-    cx, cy = w // 2, h // 2
-
-    # Outer glow
-    glow_rect = (cx - txt_w_approx // 2 - 50, cy - box_h // 2 - 30,
-                 cx + txt_w_approx // 2 + 50, cy + box_h // 2 + 30)
-    for grow in range(20, 0, -1):
-        a = int(200 * (1 - grow / 20) ** 2)
-        draw.rounded_rectangle(
-            (glow_rect[0] - grow, glow_rect[1] - grow,
-             glow_rect[2] + grow, glow_rect[3] + grow),
-            radius=36, outline=color + (a,), width=1
-        )
-
-    # Stamp box fill
-    draw.rounded_rectangle(glow_rect, radius=36, fill=(10, 14, 30, 220))
-    draw.rounded_rectangle(glow_rect, radius=36, outline=color, width=8)
-
-    # Stamp text
-    draw.text((cx, cy - 20), stamp_text, font=font_big, fill=color, anchor="mm")
-    draw.text((cx, cy + box_h // 2 + 10), emoji_text, font=font_sub,
-              fill=WHITE, anchor="mm")
-
-    # Rotate the stamp slightly
-    layer = layer.rotate(-12, resample=Image.BICUBIC, center=(cx, cy))
-
-    img.alpha_composite(layer)
-
-    out_path = image_path.replace(".png", f"_stamped_{result_type}.png")
-    if out_path == image_path:
-        out_path = image_path + f"_stamped_{result_type}.png"
-    img.convert("RGB").save(out_path, quality=95)
-    return out_path

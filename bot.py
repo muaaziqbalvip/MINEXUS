@@ -25,7 +25,7 @@ from telegram.ext import (
 
 from utils.candle_detector import detect_candles
 from utils.pattern_engine import predict_next_candle
-from utils.image_renderer import render_result_card, render_menu_banner, render_result_stamp
+from utils.image_renderer import render_result_card
 from utils.pair_detector import detect_pair_name
 from utils.indicator_reader import detect_rsi_signal
 from utils.sticker_generator import (
@@ -291,10 +291,6 @@ def build_main_menu_keyboard(user_id):
         InlineKeyboardButton("📖 Full Guide", callback_data="menu_help"),
         InlineKeyboardButton("🔗 Free Quotex Link", callback_data="menu_quotex_link"),
     ]
-    
-    plan_row = [
-        InlineKeyboardButton("💵 Quotex Trading Plan", callback_data="menu_quotex_plan"),
-    ]
 
     keyboard = [
         [InlineKeyboardButton("━━━ 📊 TRADING CENTER ━━━", callback_data="menu_noop")],
@@ -306,7 +302,6 @@ def build_main_menu_keyboard(user_id):
         account_row2,
         [InlineKeyboardButton("━━━ 📚 RESOURCES ━━━", callback_data="menu_noop")],
         resources_row,
-        plan_row,
     ]
 
     if is_admin(user_id):
@@ -354,24 +349,12 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user_id):
         text += "\n\n🛠️ _Admin panel available below._"
 
-    chat_id = update.effective_chat.id
     markup = build_main_menu_keyboard(user_id)
-    
-    banner = render_menu_banner()
 
-    try:
-        with open(banner, "rb") as b:
-            await context.bot.send_photo(
-                chat_id=chat_id, photo=b,
-                caption=text, parse_mode="Markdown", reply_markup=markup
-            )
-    except Exception as e:
-        logger.warning(f"Failed to send menu banner: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id, text=text,
-            parse_mode="Markdown", reply_markup=markup
-        )
-
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -394,46 +377,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         set_user_email(user.id, email)
         await update.message.reply_text(f"✅ Email updated to *{email}*.", parse_mode="Markdown")
-        return
-
-    # ---- Quotex Trading Plan Balance Input ----
-    if context.user_data.get("awaiting_quotex_balance"):
-        context.user_data["awaiting_quotex_balance"] = False
-        try:
-            balance = float(text.replace('$', '').replace(',', '').strip())
-            if balance < 10:
-                await update.message.reply_text("⚠️ Minimum recommended balance is $10. Please try again.")
-                return
-                
-            risk_amt = balance * 0.02
-            m1 = risk_amt
-            m2 = m1 * 2.5
-            m3 = m2 * 2.5
-            target = balance * 0.10
-            stop = balance * 0.15
-            
-            plan_text = (
-                f"💵 *YOUR QUOTEX TRADING PLAN*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"💰 *Capital:* ${balance:.2f}\n\n"
-                f"📈 *Daily Goals:*\n"
-                f"✅ Target Profit (10%): *+${target:.2f}*\n"
-                f"❌ Stop Loss (15%): *-${stop:.2f}*\n\n"
-                f"🛡️ *Martingale Money Management (2.5x)*\n"
-                f"• Step 1 (Normal Trade): *${m1:.2f}*\n"
-                f"• Step 2 (If Step 1 loses): *${m2:.2f}*\n"
-                f"• Step 3 (If Step 2 loses): *${m3:.2f}*\n\n"
-                f"⚠️ _If Step 3 loses, stop trading for the session._\n"
-                f"Stick to the plan to stay profitable!"
-            )
-            
-            await update.message.reply_text(
-                plan_text, 
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")]])
-            )
-        except ValueError:
-            await update.message.reply_text("⚠️ Please enter a valid number (e.g. 50 or 100). Try again from the menu.")
         return
 
     # ---- Onboarding wizard: awaiting profile email ----
@@ -1000,11 +943,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "menu_back":
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        await send_main_menu(update, context)
+        await query.edit_message_text(
+            "✨ *MI NEXUS Main Menu*", parse_mode="Markdown",
+            reply_markup=build_main_menu_keyboard(user_id)
+        )
 
     elif data == "menu_upgrade_shortcut":
         await query.edit_message_text(
@@ -1031,22 +973,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{status_text}",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Open My Quotex Link", url=link)]])
-        )
-
-    elif data == "menu_quotex_plan":
-        context.user_data["awaiting_quotex_balance"] = True
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=(
-                "💵 *Quotex Trading Plan Generator*\n\n"
-                "I will create a *custom Money Management* strategy for you.\n\n"
-                "Please type your current account *balance in $* (e.g. `100` or `50`):"
-            ),
-            parse_mode="Markdown"
         )
 
     # ---------------- Plan Status (client-facing) ----------------
@@ -1287,40 +1213,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         wins, losses = get_win_loss_stats(user_id)
         total = wins + losses
         win_rate = round((wins / total) * 100, 1) if total > 0 else 0
-        
-        # If the user has a stored image path from their session, stamp it.
-        img_path = context.user_data.get("last_signal_path")
-        
-        caption_append = (
-            f"\n\n{'✅' if is_win else '❌'} *Result logged: {result.upper()}*\n"
-            f"📊 Your Record: *{wins}W / {losses}L* ({win_rate}% win rate)"
+
+        await query.edit_message_text(
+            f"{'✅' if is_win else '❌'} Result logged: *{result.upper()}*\n\n"
+            f"📊 Your Record: *{wins}W / {losses}L* ({win_rate}% win rate)",
+            parse_mode="Markdown"
         )
-        
-        try:
-            if img_path and os.path.exists(img_path):
-                stamped_img = render_result_stamp(img_path, result.lower())
-                
-                # We can't edit a photo inline via standard edit_message_text
-                # So we edit the caption, and if it's the admin, we broadcast the stamped photo.
-                
-                # Edit current message caption to remove buttons and show result
-                await query.edit_message_caption(
-                    caption=context.user_data.get("last_signal_caption", "") + caption_append,
-                    parse_mode="Markdown",
-                    reply_markup=None  # Remove the buttons!
-                )
-                
-                # Update the stored path so broadcasts use the stamped version
-                context.user_data["last_signal_path"] = stamped_img
-            else:
-                await query.edit_message_text(
-                    f"{'✅' if is_win else '❌'} Result logged: *{result.upper()}*\n\n"
-                    f"📊 Your Record: *{wins}W / {losses}L* ({win_rate}% win rate)",
-                    parse_mode="Markdown"
-                )
-        except Exception as e:
-            logger.warning(f"Error stamping image: {e}")
-            await query.answer(f"Result saved: {result.upper()}")
 
         # Only the ADMIN's results get posted to groups - regular clients
         # just log their own personal result privately.
@@ -2468,7 +2366,6 @@ async def error_handler(update, context):
 async def _post_init(app):
     """Sets the bottom-left menu button's command list - shown when a
     user taps the menu icon next to the message input field."""
-    from telegram import MenuButtonCommands
     commands = [
         BotCommand("start", "🚀 Start / Create Account"),
         BotCommand("menu", "📋 Open Main Menu"),
@@ -2476,8 +2373,7 @@ async def _post_init(app):
     ]
     try:
         await app.bot.set_my_commands(commands)
-        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-        logger.info("Bot menu commands and menu button set successfully.")
+        logger.info("Bot menu commands set successfully.")
     except Exception as e:
         logger.warning(f"Failed to set bot menu commands (non-critical): {e}")
 
