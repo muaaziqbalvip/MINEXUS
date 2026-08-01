@@ -236,54 +236,84 @@ async def play_intro_animation(update: Update, context: ContextTypes.DEFAULT_TYP
     works everywhere without extra files to ship.
     """
     frames = [
-        "▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️  0%\n_Initializing MI NEXUS..._",
-        "▪️▪️▫️▫️▫️▫️▫️▫️▫️▫️  20%\n_Loading pattern library (100+ formations)..._",
-        "▪️▪️▪️▪️▫️▫️▫️▫️▫️▫️  40%\n_Calibrating RSI confluence engine..._",
-        "▪️▪️▪️▪️▪️▪️▫️▫️▫️▫️  60%\n_Syncing prediction core..._",
-        "▪️▪️▪️▪️▪️▪️▪️▪️▫️▫️  80%\n_Polishing premium signal cards..._",
-        "▪️▪️▪️▪️▪️▪️▪️▪️▪️▪️  100%\n_🟢 MI NEXUS is online!_",
+        "```\n╔══════════════════════════════╗\n║   💎 MI NEXUS PRO v2.0       ║\n║   SYSTEM BOOT SEQUENCE       ║\n╚══════════════════════════════╝\n```\n░░░░░░░░░░░░░░░░  0%\n⚙️ _Initializing core systems..._",
+        "```\n[ PATTERN ENGINE ] ........... ✅\n[ RSI MODULE    ] ............ ⏳\n[ MACD ENGINE   ] ............ ⏳\n[ AI BRAIN      ] ............ ⏳\n```\n████░░░░░░░░░░░░  25%\n📊 _Loading 100+ candlestick patterns..._",
+        "```\n[ PATTERN ENGINE ] ........... ✅\n[ RSI MODULE    ] ............ ✅\n[ MACD ENGINE   ] ............ ✅\n[ AI BRAIN      ] ............ ⏳\n```\n████████░░░░░░░░  50%\n🧮 _Calibrating Bollinger + MACD engines..._",
+        "```\n[ PATTERN ENGINE ] ........... ✅\n[ RSI MODULE    ] ............ ✅\n[ MACD ENGINE   ] ............ ✅\n[ AI BRAIN      ] ............ ✅\n```\n████████████░░░░  75%\n🤖 _Connecting Groq AI vision layer..._",
+        "```\n[ PATTERN ENGINE ] ........... ✅\n[ RSI MODULE    ] ............ ✅\n[ MACD ENGINE   ] ............ ✅\n[ AI BRAIN      ] ............ ✅\n[ SIGNAL CARDS  ] ............ ✅\n```\n████████████████  100%\n🟢 _MI NEXUS PRO is ONLINE — Ready to analyze!_",
     ]
     try:
-        msg = await update.message.reply_text(f"⚡ *MI NEXUS BOOT SEQUENCE*\n\n{frames[0]}", parse_mode="Markdown")
+        msg = await update.message.reply_text(
+            f"⚡ *MI NEXUS PRO — BOOT SEQUENCE*\n\n{frames[0]}",
+            parse_mode="Markdown"
+        )
         for frame in frames[1:]:
-            await asyncio.sleep(0.45)
-            await msg.edit_text(f"⚡ *MI NEXUS BOOT SEQUENCE*\n\n{frame}", parse_mode="Markdown")
-        await asyncio.sleep(0.5)
+            await asyncio.sleep(0.6)
+            await msg.edit_text(
+                f"⚡ *MI NEXUS PRO — BOOT SEQUENCE*\n\n{frame}",
+                parse_mode="Markdown"
+            )
+        await asyncio.sleep(0.7)
         await msg.delete()
     except Exception as e:
         logger.warning(f"Intro animation failed (non-critical): {e}")
 
 
 def build_main_menu_keyboard(user_id):
-    """Shared keyboard builder for the main menu — used by both the
-    /start / /menu flow and the 'Back to Menu' callback, so both stay
-    in sync automatically instead of drifting apart over time."""
+    """Premium categorized keyboard builder for the main menu.
+    Organized into Trading / Settings / Account / Resources sections
+    with button-box layout for a clean, pro-level feel."""
+
+    # ── TRADING CENTER ──────────────────────────────────────────────
+    trading_row = [
+        InlineKeyboardButton("📸 Quick Analyze", callback_data="menu_quick_analyze"),
+        InlineKeyboardButton("🤖 AI Deep Scan", callback_data="menu_ai_deepscan"),
+    ]
+
+    # ── SETTINGS ────────────────────────────────────────────────────
+    settings_row = [
+        InlineKeyboardButton("⏱ Timeframe", callback_data="menu_timeframe"),
+        InlineKeyboardButton("⏳ Trade Duration", callback_data="menu_trade_duration"),
+    ]
+
+    # ── ACCOUNT ─────────────────────────────────────────────────────
+    account_row1 = [
+        InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
+        InlineKeyboardButton("👤 My Profile", callback_data="menu_profile"),
+    ]
+    account_row2 = [
+        InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status"),
+        InlineKeyboardButton("🔥 Upgrade Plan", callback_data="menu_upgrade_shortcut"),
+    ]
+
+    # ── RESOURCES ───────────────────────────────────────────────────
+    resources_row = [
+        InlineKeyboardButton("📖 Full Guide", callback_data="menu_help"),
+        InlineKeyboardButton("🔗 Free Quotex Link", callback_data="menu_quotex_link"),
+    ]
+
     keyboard = [
-        [
-            InlineKeyboardButton("👤 My Profile", callback_data="menu_profile"),
-            InlineKeyboardButton("⏱ Timeframe", callback_data="menu_timeframe"),
-        ],
-        [
-            InlineKeyboardButton("⏳ Trade Duration", callback_data="menu_trade_duration"),
-            InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
-        ],
-        [InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status")],
-        [InlineKeyboardButton("🔥 Upgrade Plan", callback_data="menu_upgrade_shortcut")],
-        [InlineKeyboardButton("🔗 Get Free Quotex Link", callback_data="menu_quotex_link")],
-        [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
+        [InlineKeyboardButton("━━━ 📊 TRADING CENTER ━━━", callback_data="menu_noop")],
+        trading_row,
+        [InlineKeyboardButton("━━━ ⚙️ SETTINGS ━━━", callback_data="menu_noop")],
+        settings_row,
+        [InlineKeyboardButton("━━━ 👤 ACCOUNT ━━━", callback_data="menu_noop")],
+        account_row1,
+        account_row2,
+        [InlineKeyboardButton("━━━ 📚 RESOURCES ━━━", callback_data="menu_noop")],
+        resources_row,
     ]
 
     if is_admin(user_id):
         auto_bc, selected_group = get_auto_broadcast_settings(user_id)
         bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
-        keyboard.insert(2, [
-            InlineKeyboardButton(f"📢 Auto-Broadcast: {bc_status}", callback_data="menu_broadcast_settings"),
+        keyboard.append([InlineKeyboardButton("━━━ 🛠️ ADMIN ━━━", callback_data="menu_noop")])
+        keyboard.append([
+            InlineKeyboardButton(f"📢 Broadcast: {bc_status}", callback_data="menu_broadcast_settings"),
+            InlineKeyboardButton("🎬 Session", callback_data="menu_session_start"),
         ])
-        keyboard.insert(3, [
-            InlineKeyboardButton("🎬 Session Start", callback_data="menu_session_start"),
+        keyboard.append([
             InlineKeyboardButton("👥 Groups", callback_data="menu_groups"),
-        ])
-        keyboard.insert(4, [
             InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_open"),
         ])
 
@@ -296,21 +326,28 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tf_label = TF_LABELS.get(tf, "1 Min")
     dur = get_trade_duration(user_id)
     dur_label = DURATION_LABELS.get(dur, "1 Min")
+    ai_status = "🤖 ON" if is_ai_analysis_enabled() else "🔴 OFF"
 
     text = (
-        "✨ *MI NEXUS — MAIN MENU* ✨\n\n"
-        f"⏱ Chart Timeframe: *{tf_label}*\n"
-        f"⏳ Trade Duration: *{dur_label}*\n\n"
-        "📸 Send me any trading chart screenshot and I'll analyze it:\n"
-        "• 100+ candlestick pattern detection\n"
-        "• RSI confluence + trend momentum scoring\n"
-        "• Next candle prediction (UP/DOWN)\n"
-        "• Confidence percentage\n\n"
-        "_Just upload an image to get started!_"
+        "💎 *MI NEXUS PRO TRADER* 💎\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📊 *Current Settings:*\n"
+        f"  ⏱ Timeframe: *{tf_label}*\n"
+        f"  ⏳ Duration: *{dur_label}*\n"
+        f"  {ai_status} AI Analysis\n\n"
+        "📸 *How to Analyze:*\n"
+        "Just send any chart screenshot!\n\n"
+        "🔬 *What I Detect:*\n"
+        "  • 100+ candlestick patterns\n"
+        "  • MACD + Bollinger + RSI confluence\n"
+        "  • AI deep vision analysis (Groq)\n"
+        "  • Entry timing & risk level\n"
+        "  • Next candle UP/DOWN prediction\n\n"
+        "_Select an option below or just send a chart!_"
     )
 
     if is_admin(user_id):
-        text += "\n\n🛠️ _Admin controls available below._"
+        text += "\n\n🛠️ _Admin panel available below._"
 
     markup = build_main_menu_keyboard(user_id)
 
@@ -708,7 +745,55 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔒 This feature is available to the admin only.")
         return
 
-    if data == "menu_timeframe":
+    if data == "menu_noop":
+        # Section header buttons — just answer without any action
+        return
+
+    elif data == "menu_quick_analyze":
+        await query.edit_message_text(
+            "📸 *Ready to Analyze!*\n\n"
+            "Just send me your chart screenshot right now and I'll give you a full premium signal:\n\n"
+            "• 100+ candlestick patterns\n"
+            "• MACD + Bollinger + RSI confluence\n"
+            "• AI deep vision analysis\n"
+            "• Entry timing & risk level\n\n"
+            "_Send your screenshot now ↓_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")]
+            ])
+        )
+
+    elif data == "menu_ai_deepscan":
+        if not is_ai_available():
+            await query.edit_message_text(
+                "❌ *AI Not Configured*\n\n"
+                "Groq API key is not set. The admin needs to set the `GROQ_API_KEY` "
+                "environment variable for AI analysis to work.\n\n"
+                "Standard local analysis (100+ patterns + indicators) is still fully active.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")]
+                ])
+            )
+        else:
+            ai_on = is_ai_analysis_enabled()
+            status = "🤖 ON" if ai_on else "🔴 OFF"
+            await query.edit_message_text(
+                f"🤖 *AI Deep Scan*\n\n"
+                f"Current status: *{status}*\n\n"
+                f"{'AI analysis is currently ACTIVE. Send a chart to get a full AI + local signal.' if ai_on else 'AI analysis is OFF. Only admins can toggle it from the Admin Panel.'}\n\n"
+                f"_The AI uses Groq vision to perform a structured 5-step technical analysis "
+                f"(trend structure → patterns → momentum → S/R → confluence) "
+                f"before concluding a direction._",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📸 Send Chart Now", callback_data="menu_quick_analyze")],
+                    [InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")],
+                ])
+            )
+
+    elif data == "menu_timeframe":
         keyboard = []
         row = []
         for i, (label, code) in enumerate(TIMEFRAME_OPTIONS):
@@ -1322,7 +1407,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     processing_msg = await update.message.reply_text(
-        "⚡ *MI NEXUS Engine Starting...*\n░░░░░░░░░░ 0%",
+        "⚡ *MI NEXUS PRO ENGINE*\n"
+        "🔍 Analyzing your chart...\n"
+        "░░░░░░░░░░░░░░░░  0%",
         parse_mode="Markdown"
     )
 
@@ -1332,7 +1419,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await photo_file.download_to_drive(local_path)
 
         await processing_msg.edit_text(
-            "🔍 *Detecting candlesticks...*\n▓▓▓░░░░░░░ 30%",
+            "🔍 *Detecting candlesticks...*\n"
+            "████░░░░░░░░░░░░  25% 🗒",
             parse_mode="Markdown"
         )
         candles, cropped_chart, offset = detect_candles(local_path)
@@ -1349,7 +1437,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         await processing_msg.edit_text(
-            "🧮 *Matching 89 pattern signatures...*\n▓▓▓▓▓▓░░░░ 60%",
+            "🧮 *Matching 100+ pattern signatures...*\n"
+            "████████░░░░░░░░  50% 🧠",
             parse_mode="Markdown"
         )
         rsi_signal = detect_rsi_signal(local_path)
@@ -1359,10 +1448,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sensitivity=bot_cfg.get("signal_sensitivity", 1.0)
         )
 
-        # ---- Optional AI vision layer (admin-toggleable, off by default) ----
+        # ---- Optional AI vision layer (admin-toggleable) ----
         if is_ai_analysis_enabled() and is_ai_available():
             await processing_msg.edit_text(
-                "🤖 *Running AI vision analysis...*\n▓▓▓▓▓▓▓░░░ 70%",
+                "🤖 *AI Deep Vision Analysis...*\n"
+                "████████████░░░░  75% 🔬",
                 parse_mode="Markdown"
             )
             ai_result = analyze_chart_with_ai(local_path)
@@ -1376,7 +1466,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pair_name = detect_pair_name(local_path) or "Chart Analysis"
 
         await processing_msg.edit_text(
-            "🎨 *Rendering your signal card...*\n▓▓▓▓▓▓▓▓▓░ 90%",
+            "🎨 *Rendering your premium signal card...*\n"
+            "███████████████░  95% 📊",
             parse_mode="Markdown"
         )
 
@@ -1393,19 +1484,37 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             candles=candles,
         )
 
+        # ──────── BUILD PREMIUM PRO SIGNAL CARD ────────────────────────
         log_id = log_signal(user.id, prediction["direction"], prediction["confidence"], tf_code)
         increment_total_signals(user.id)
 
         is_up = prediction["direction"] == "UP"
         dir_emoji = "🟢⬆️" if is_up else "🔴⬇️"
+        dir_arrow = "↑ UP" if is_up else "↓ DOWN"
         strength = prediction.get("strength", "MODERATE")
-        strength_emoji = {"VERY STRONG": "🔥🔥🔥", "STRONG": "🔥🔥", "MODERATE": "🔥", "WEAK": "⚡"}.get(strength, "⚡")
+        strength_emoji = {
+            "VERY STRONG": "🔥🔥🔥",
+            "STRONG": "🔥🔥",
+            "MODERATE": "🔥",
+            "WEAK": "⚡"
+        }.get(strength, "⚡")
 
-        top_pattern = "N/A"
+        # Patterns detected
+        top_patterns = []
         if prediction.get("breakdown"):
-            top_pattern = sorted(prediction["breakdown"], key=lambda p: p["reliability"], reverse=True)[0]["name"]
-
+            sorted_patterns = sorted(
+                prediction["breakdown"],
+                key=lambda p: p["reliability"],
+                reverse=True
+            )[:3]  # top 3 patterns
+            top_patterns = [
+                f"`{p['name']}` ({p['reliability']:.0f}%)"
+                for p in sorted_patterns
+            ]
         pattern_count = len(prediction.get("breakdown", []))
+        patterns_text = "\n   ".join(top_patterns) if top_patterns else "N/A"
+
+        # Market condition from choppiness
         choppiness = prediction.get("choppiness", 0)
         if choppiness < 0.3:
             condition_text = "🟢 Clean Trend"
@@ -1414,52 +1523,96 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             condition_text = "🔴 Choppy"
 
+        # Technical indicators line
+        tech = prediction.get("technical_indicators", {})
+        tech_parts = []
+        if tech.get("calculated_rsi") is not None:
+            rsi_val = tech["calculated_rsi"]
+            rsi_zone = "OB" if rsi_val >= 70 else ("OS" if rsi_val <= 30 else "N")
+            tech_parts.append(f"RSI {rsi_val}({rsi_zone})")
+        if tech.get("ma_trend") and tech["ma_trend"] != "flat":
+            tech_parts.append(f"MA: {tech['ma_trend'].capitalize()[:4]}")
+        if tech.get("macd_bias") and tech["macd_bias"] != "neutral":
+            tech_parts.append(f"MACD: {tech['macd_bias'].capitalize()[:4]}")
+        if tech.get("bollinger_position") and tech["bollinger_position"] != "middle":
+            bb = tech["bollinger_position"].replace("_", " ").title()
+            tech_parts.append(f"BB: {bb[:10]}")
+        if tech.get("trend_strength_label"):
+            tech_parts.append(tech["trend_strength_label"])
+        tech_line = f"\n🧮 *Technicals:* `{'  |  '.join(tech_parts)}`" if tech_parts else ""
+
+        # RSI visual signal line
         rsi_line = ""
         rsi_data = prediction.get("rsi_signal")
         if rsi_data:
             rsi_agrees = prediction.get("rsi_agrees")
             agree_symbol = " ✅" if rsi_agrees else (" ⚠️" if rsi_agrees is False else "")
-            rsi_line = f"📉 RSI Zone: *{rsi_data['zone']}*{agree_symbol}\n"
+            rsi_line = f"\n📉 *RSI Zone:* `{rsi_data['zone']}`{agree_symbol}"
 
-        tech_line = ""
-        tech = prediction.get("technical_indicators")
-        if tech:
-            tech_parts = []
-            if tech.get("calculated_rsi") is not None:
-                tech_parts.append(f"RSI(14): {tech['calculated_rsi']}")
-            if tech.get("ma_trend") and tech["ma_trend"] != "flat":
-                tech_parts.append(f"MA: {tech['ma_trend'].capitalize()}")
-            if tech.get("zigzag_structure_bias") and tech["zigzag_structure_bias"] != "neutral":
-                tech_parts.append(f"Structure: {tech['zigzag_structure_bias'].capitalize()}")
-            if tech.get("fractals_count"):
-                tech_parts.append(f"Fractals: {tech['fractals_count']}")
-            if tech_parts:
-                tech_line = f"🧮 Technicals: *{' • '.join(tech_parts)}*\n"
-
-        ai_line = ""
+        # AI analysis block
+        ai_block = ""
         ai_result = prediction.get("ai_result")
-        if ai_result:
-            ai_agrees = prediction.get("ai_agrees")
-            agree_symbol = "✅" if ai_agrees else "⚠️"
-            ai_line = (
-                f"🤖 AI Read: *{ai_result['direction']}* ({ai_result['confidence']:.0f}%) {agree_symbol}\n"
+        if ai_result and "error" not in ai_result:
+            ai_dir = ai_result.get("direction", "?")
+            ai_conf = ai_result.get("confidence", 0)
+            ai_agrees = prediction.get("ai_agrees", None)
+            agree_txt = "✅ AGREES" if ai_agrees else "⚠️ DIFFERS"
+            ai_reasoning = prediction.get("ai_reasoning", ai_result.get("reasoning", ""))
+            ai_regime = prediction.get("ai_market_regime", ai_result.get("market_regime", ""))
+            ai_block = (
+                f"\n🤖 *AI Deep Analysis* ({ai_result.get('model_used', 'Groq')[:12]}):\n"
+                f"   Direction: *{ai_dir}* ({ai_conf:.0f}%) — {agree_txt}\n"
             )
-            if ai_result.get("reasoning"):
-                ai_line += f"   _{ai_result['reasoning']}_\n"
+            if ai_reasoning:
+                # Truncate reasoning to 120 chars for clean display
+                truncated = ai_reasoning[:120] + ("..." if len(ai_reasoning) > 120 else "")
+                ai_block += f"   _\"{truncated}\"_\n"
+            if ai_regime:
+                ai_block += f"   Market: *{ai_regime}*"
+
+        # Entry timing (from AI or local engine)
+        entry_timing = (
+            prediction.get("ai_entry_timing")
+            or prediction.get("entry_timing")
+            or "WAIT FOR CONFIRMATION"
+        )
+        entry_emoji = "🟢" if "NOW" in entry_timing else ("🟡" if "WAIT" in entry_timing else "🔴")
+
+        # Risk level (from AI or local engine)
+        risk_level = (
+            prediction.get("ai_risk_level")
+            or prediction.get("risk_level")
+            or "🟡 MEDIUM RISK"
+        )
+
+        # Confluence stats
+        bull_sigs = tech.get("bull_signal_count", 0)
+        bear_sigs = tech.get("bear_signal_count", 0)
+        confluence_bar = "🟢" * bull_sigs + "🔴" * bear_sigs
 
         caption = (
-            f"💎 *MI NEXUS PREMIUM SIGNAL* 💎\n\n"
-            f"{dir_emoji} Direction: *{prediction['direction']}*\n"
-            f"📊 Confidence: *{prediction['confidence']}%* {strength_emoji}\n"
-            f"⏱ Timeframe: *{tf_label}*\n"
-            f"⏳ Trade Duration: *{dur_label}*\n"
-            f"🕯️ Key Pattern: *{top_pattern}* ({pattern_count} total detected)\n"
+            f"💎 *MI NEXUS PRO SIGNAL* 💎\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{dir_emoji} *{dir_arrow}* {strength_emoji}\n"
+            f"📊 Confidence: *{prediction['confidence']}%* — *{strength}*\n"
+            f"⏱ Timeframe: *{tf_label}* | ⏳ Duration: *{dur_label}*\n\n"
+
+            f"━━━ MARKET ANALYSIS ━━━\n"
             f"📈 Market Condition: *{condition_text}*\n"
+            f"🕯️ Key Patterns ({pattern_count} detected):\n"
+            f"   {patterns_text}"
             f"{rsi_line}"
-            f"{tech_line}"
-            f"{ai_line}"
-            f"💹 Pair: *{pair_name}*\n\n"
-            f"✅ _Trade smart, manage your risk._"
+            f"{tech_line}\n"
+            f"📊 Signals: {confluence_bar or 'N/A'}\n"
+            f"   ({bull_sigs}🟢 Bullish | {bear_sigs}🔴 Bearish)\n\n"
+
+            f"━━━ TRADE SETUP ━━━\n"
+            f"💹 Pair: *{pair_name}*\n"
+            f"{entry_emoji} Entry: *{entry_timing}*\n"
+            f"⚠️ Risk Level: *{risk_level}*\n"
+            f"{ai_block}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ _Trade smart. Manage your risk._"
         )
 
         with open(output_path, "rb") as img:

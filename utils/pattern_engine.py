@@ -670,31 +670,84 @@ def compute_streak_bonus(candles, lookback=6):
     return magnitude if last_dir else -magnitude
 
 
-def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
+def _determine_entry_timing(confidence, choppiness, strength, tech):
     """
-    Combines pattern signals + trend momentum + market context into a
-    final prediction. Improvements over the basic version:
-      - Patterns detected on the most recent candle carry more weight than
-        ones anchored further back (recency weighting).
-      - When multiple patterns agree on direction, confidence gets a small
-        boost (confluence bonus); when they conflict, it's dampened.
-      - Choppy/indecisive recent price action lowers confidence, since
-        pattern reliability drops in sideways markets.
-      - A soft support/resistance proximity nudge is factored in.
-      - Optional RSI confluence: if an RSI-like oscillator was detected in
-        the screenshot (see indicator_reader.py) and it agrees with the
-        pattern-based direction, confidence gets a modest boost — this
-        mirrors the well-documented real-world finding that combining RSI
-        with candlestick confirmation improves signal accuracy versus
-        using candlesticks alone.
-      - Streak/momentum persistence: a run of 3+ consecutive same-direction
-        candles gets a small, capped continuation nudge (see
-        compute_streak_bonus), since short-timeframe momentum tends to
-        persist briefly before reversing.
-      - `sensitivity` is an admin-tunable multiplier (0.7-1.3, default 1.0)
-        applied to the final score before clamping — lets the admin dial
-        the engine to be more conservative or more aggressive globally
-        without touching the underlying pattern weights.
+    Determines the recommended entry timing based on signal quality.
+    Returns "ENTER NOW", "WAIT FOR CONFIRMATION", or "SKIP - LOW QUALITY".
+    """
+    # Skip conditions: very choppy market or very weak signal
+    if choppiness > 0.65 or confidence < 58:
+        return "SKIP - LOW QUALITY"
+
+    # High-quality entry conditions
+    if confidence >= 78 and choppiness < 0.35 and strength in ("VERY STRONG", "STRONG"):
+        # Additional check: do volume and MACD agree?
+        vol_bias = tech.get("volume_bias", "neutral")
+        macd_bias = tech.get("macd_bias", "neutral")
+        if vol_bias != "neutral" or macd_bias != "neutral":
+            return "ENTER NOW"
+
+    # Default: wait for one more confirming candle
+    return "WAIT FOR CONFIRMATION"
+
+
+def _determine_risk_level(confidence, choppiness, tech, patterns):
+    """
+    Calculates trade risk level based on signal quality and market conditions.
+    Returns "🟢 LOW RISK", "🟡 MEDIUM RISK", or "🔴 HIGH RISK".
+    """
+    risk_score = 0
+
+    # Higher confidence = lower risk
+    if confidence >= 80:
+        risk_score += 0
+    elif confidence >= 68:
+        risk_score += 1
+    else:
+        risk_score += 2
+
+    # Choppiness increases risk
+    if choppiness > 0.55:
+        risk_score += 2
+    elif choppiness > 0.35:
+        risk_score += 1
+
+    # ATR volatility
+    atr_vol = tech.get("atr_volatility", "medium")
+    if atr_vol == "high":
+        risk_score += 1
+
+    # Bollinger position: outside bands = higher risk (possible snap-back)
+    bb_pos = tech.get("bollinger_position", "middle")
+    if bb_pos in ("outside_upper", "outside_lower"):
+        risk_score += 1
+
+    # Pattern count: single pattern = higher risk than multi-pattern
+    if len(patterns) <= 1:
+        risk_score += 1
+
+    if risk_score <= 1:
+        return "🟢 LOW RISK"
+    elif risk_score <= 3:
+        return "🟡 MEDIUM RISK"
+    else:
+        return "🔴 HIGH RISK"
+
+
+def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
+
+    """
+    PRO v2: Combines pattern signals + trend momentum + market context +
+    technical indicators (MACD, Bollinger, Volume, ATR, Trend Strength)
+    into a final prediction with entry timing and risk level assessment.
+
+    New in v2:
+      - 6 technical signals instead of 3 (adds MACD, Bollinger, Volume bias)
+      - Trend strength bonus for very strong directional momentum
+      - Volume surge confirmation bonus
+      - Wider confidence range: 50-98% (was 54-96%)
+      - Entry timing: ENTER NOW / WAIT FOR CONFIRMATION / SKIP
+      - Risk level: 🟢 LOW RISK / 🟡 MEDIUM RISK / 🔴 HIGH RISK
     """
     patterns = detect_patterns(candles)
     trend_bias = compute_trend_bias(candles)
@@ -727,28 +780,18 @@ def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
     if pattern_weight_sum > 0:
         pattern_score /= pattern_weight_sum
 
-    # Confluence: multiple patterns agreeing on the same direction is a
-    # stronger signal than a single pattern; conflicting patterns should
-    # pull confidence back toward neutral.
     directional_patterns = bullish_count + bearish_count
     if directional_patterns >= 2:
         agreement_ratio = max(bullish_count, bearish_count) / directional_patterns
-        confluence_factor = 0.85 + (agreement_ratio - 0.5) * 0.5  # ~0.85 to ~1.10
+        confluence_factor = 0.85 + (agreement_ratio - 0.5) * 0.5
     else:
-        confluence_factor = 0.9  # single pattern: slightly conservative
+        confluence_factor = 0.9
 
     final_score = (pattern_score * 0.58 + trend_bias * 0.28 + sr_nudge + streak_bonus) * confluence_factor
-
-    # Choppy markets: shrink the score toward zero (less confident either way)
     choppiness_damping = 1.0 - (choppiness * 0.35)
     final_score *= choppiness_damping
-
-    # Admin-tunable global sensitivity (0.7 conservative .. 1.3 aggressive)
     final_score *= max(0.7, min(1.3, sensitivity))
 
-    # RSI confluence nudge: agreement = small confidence boost, disagreement
-    # = small pull-back. Kept modest since our RSI reading is a visual
-    # approximation, not an exact recalculation from raw price data.
     rsi_agrees = None
     if rsi_signal and rsi_signal.get("detected") and rsi_signal.get("bias") in ("bullish", "bearish"):
         pattern_direction = "bullish" if final_score >= 0 else "bearish"
@@ -761,15 +804,22 @@ def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
 
     final_score = max(-1.0, min(1.0, final_score))
 
-    # ---- Technical indicator confluence (Moving Average trend, ZigZag
-    # market structure, and a properly CALCULATED RSI from actual candle
-    # data - distinct from the visual on-chart RSI read above, this one
-    # is computed with Wilder's formula from the candles themselves) ----
+    # ---- Technical indicator confluence v2: now includes MACD, Bollinger,
+    # Volume bias in addition to the original MA/ZigZag/RSI signals. ----
     tech_agree_count = 0
     tech_disagree_count = 0
     pattern_direction = "bullish" if final_score >= 0 else "bearish"
 
-    for tech_signal in (tech.get("ma_trend"), tech.get("zigzag_structure_bias"), tech.get("rsi_bias")):
+    # v2: check 6 signals instead of 3
+    tech_signals = [
+        tech.get("ma_trend"),
+        tech.get("zigzag_structure_bias"),
+        tech.get("rsi_bias"),
+        tech.get("macd_bias"),       # new v2
+        tech.get("bollinger_bias"),  # new v2
+        tech.get("volume_bias"),     # new v2
+    ]
+    for tech_signal in tech_signals:
         if tech_signal == pattern_direction:
             tech_agree_count += 1
         elif tech_signal in ("bullish", "bearish"):
@@ -777,29 +827,47 @@ def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
 
     if tech_agree_count or tech_disagree_count:
         net_tech = tech_agree_count - tech_disagree_count
-        # Each net agreeing indicator nudges confidence ~4%, capped modestly
-        # so technicals support the pattern read rather than overriding it.
-        tech_factor = 1.0 + max(-0.15, min(0.15, net_tech * 0.04))
+        # Each net agreeing indicator nudges score ~3.5%, capped at ±18%
+        tech_factor = 1.0 + max(-0.18, min(0.18, net_tech * 0.035))
         final_score *= tech_factor
+
+    # Trend strength bonus: strong directional trend boosts score slightly
+    trend_str = tech.get("trend_strength", 0)
+    trend_dir = tech.get("trend_direction", "neutral")
+    if trend_str > 0.70 and trend_dir == pattern_direction:
+        final_score *= 1.06  # modest boost for very strong trend alignment
+
+    # Volume surge on the signal candle: strong momentum confirmation
+    if tech.get("volume_surge") and pattern_direction == trend_dir:
+        final_score *= 1.04
 
     final_score = max(-1.0, min(1.0, final_score))
 
     direction = "UP" if final_score >= 0 else "DOWN"
-    confidence = min(96, max(54, 55 + abs(final_score) * 42))
 
-    if confidence >= 85:
+    # Wider confidence range: 50-98% (was 54-96%)
+    # Formula: 50 + |score| * 48 → gives full 50-98 range
+    confidence = min(98, max(50, 50 + abs(final_score) * 48))
+
+    if confidence >= 82:
         strength = "VERY STRONG"
-    elif confidence >= 72:
+    elif confidence >= 70:
         strength = "STRONG"
-    elif confidence >= 62:
+    elif confidence >= 60:
         strength = "MODERATE"
     else:
         strength = "WEAK"
+
+    # Entry timing and risk level (new v2)
+    entry_timing = _determine_entry_timing(confidence, choppiness, strength, tech)
+    risk_level = _determine_risk_level(confidence, choppiness, tech, patterns)
 
     return {
         "direction": direction,
         "confidence": round(confidence, 1),
         "strength": strength,
+        "entry_timing": entry_timing,
+        "risk_level": risk_level,
         "patterns": patterns,
         "breakdown": breakdown,
         "trend_bias": round(trend_bias, 3),
