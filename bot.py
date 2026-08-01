@@ -17,7 +17,7 @@ import random
 import logging
 from datetime import datetime
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
@@ -33,6 +33,7 @@ from utils.sticker_generator import (
 )
 from utils.imgbb_uploader import upload_image
 from utils.country_data import COUNTRIES, country_label, is_generally_restricted, get_pricing_region
+from utils.ai_analyzer import is_ai_available, analyze_chart_with_ai, blend_ai_with_local
 from utils.firebase_db import (
     init_firebase, get_user, create_user, unlock_user, is_unlocked,
     set_user_timeframe, get_timeframe, set_trade_duration, get_trade_duration,
@@ -50,6 +51,9 @@ from utils.firebase_db import (
     get_quotex_tiers, set_quotex_tier, remove_quotex_tier, tier_for_amount,
     get_quotex_full_profile, list_users_with_quotex_activity,
     set_user_country, get_user_country,
+    set_has_existing_quotex_account, set_user_email, get_user_email,
+    set_user_profile_photo, get_user_profile,
+    is_ai_analysis_enabled, set_ai_analysis_enabled,
     get_required_channels, add_required_channel, remove_required_channel,
 )
 import asyncio
@@ -256,13 +260,14 @@ def build_main_menu_keyboard(user_id):
     in sync automatically instead of drifting apart over time."""
     keyboard = [
         [
+            InlineKeyboardButton("👤 My Profile", callback_data="menu_profile"),
             InlineKeyboardButton("⏱ Timeframe", callback_data="menu_timeframe"),
-            InlineKeyboardButton("⏳ Trade Duration", callback_data="menu_trade_duration"),
         ],
         [
+            InlineKeyboardButton("⏳ Trade Duration", callback_data="menu_trade_duration"),
             InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
-            InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status"),
         ],
+        [InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status")],
         [InlineKeyboardButton("🔥 Upgrade Plan", callback_data="menu_upgrade_shortcut")],
         [InlineKeyboardButton("🔗 Get Free Quotex Link", callback_data="menu_quotex_link")],
         [InlineKeyboardButton("📖 How To Use — Full Guide", callback_data="menu_help")],
@@ -326,6 +331,41 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _moderation_gate(update, user.id):
         return
 
+    # ---- Profile edit: email (separate from the onboarding wizard) ----
+    if context.user_data.get("awaiting_profile_email_edit"):
+        context.user_data["awaiting_profile_email_edit"] = False
+        email = text.strip()
+        if "@" not in email or "." not in email.split("@")[-1]:
+            await update.message.reply_text("⚠️ That doesn't look like a valid email. Please try again from your profile.")
+            return
+        set_user_email(user.id, email)
+        await update.message.reply_text(f"✅ Email updated to *{email}*.", parse_mode="Markdown")
+        return
+
+    # ---- Onboarding wizard: awaiting profile email ----
+    if context.user_data.get("awaiting_profile_email"):
+        context.user_data["awaiting_profile_email"] = False
+        email = text.strip()
+        if "@" not in email or "." not in email.split("@")[-1]:
+            await update.message.reply_text(
+                "⚠️ That doesn't look like a valid email. Please send your "
+                "email address again."
+            )
+            context.user_data["awaiting_profile_email"] = True
+            return
+
+        set_user_email(user.id, email)
+        context.user_data["awaiting_profile_photo"] = True
+        keyboard = [[InlineKeyboardButton("⏭️ Skip This Step", callback_data="skip_profile_photo")]]
+        await update.message.reply_text(
+            "📸 *Last step — send a profile picture*\n\n"
+            "This will show on your MI NEXUS profile. Just send any photo, "
+            "or skip this step.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
     # ---- Admin: cancel any pending admin text-input flow ----
     if text == "/cancel" and is_admin(user.id):
         context.user_data["awaiting_admin_broadcast_text"] = False
@@ -337,17 +377,33 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---- Admin: awaiting a required-channel add ----
     if is_admin(user.id) and context.user_data.get("awaiting_channel_add"):
         context.user_data["awaiting_channel_add"] = False
-        lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-        if len(lines) != 3:
+        link = text.strip()
+
+        # Extract the @username or invite-hash portion from the link
+        username_part = link.rstrip("/").split("/")[-1]
+        if not username_part:
+            await update.message.reply_text("⚠️ That doesn't look like a valid link. Try again via the admin panel.")
+            return
+
+        lookup_id = username_part if username_part.startswith("@") else f"@{username_part}"
+
+        try:
+            chat = await context.bot.get_chat(lookup_id)
+        except Exception as e:
             await update.message.reply_text(
-                "⚠️ Please send exactly 3 lines: name, chat_id/@username, "
-                "invite link. Try again via the admin panel."
+                f"⚠️ Couldn't look up that channel/group automatically: {e}\n\n"
+                f"Make sure:\n"
+                f"1. The link is a public channel/group (not a private invite hash)\n"
+                f"2. This bot has been added as a member/admin of it\n\n"
+                f"Then try again via the admin panel."
             )
             return
-        name, chat_id, url = lines
-        add_required_channel(name, chat_id, url)
+
+        add_required_channel(chat.title or username_part, chat.id, link)
         await update.message.reply_text(
-            f"✅ Added *{name}* as a required channel.", parse_mode="Markdown"
+            f"✅ Added *{chat.title}* as a required channel/group.\n"
+            f"All members must join it to use the bot from now on.",
+            parse_mode="Markdown"
         )
         return
 
@@ -480,6 +536,37 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_main_menu(update, context)
 
 
+async def _finish_onboarding(update: Update, context, user_id):
+    """Called once the onboarding wizard (country -> quotex status ->
+    email -> photo) completes - unlocks the account and shows the trial
+    offer / main menu, same as the old single-step account_login flow did.
+    Works whether called from a text-message update or a callback-query
+    update, since it always reaches for update.effective_chat directly."""
+    unlock_user(user_id)
+
+    if not has_used_trial(user_id):
+        keyboard = [[InlineKeyboardButton("🎁 Start My Free Trial (10 signals / 1 day)", callback_data="start_trial")]]
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                "✅ *Profile Complete — Account Created!*\n\n"
+                "Welcome to MI NEXUS — you're all set.\n\n"
+                "🎁 You have a *free trial* waiting: *10 free signal analyses, "
+                "valid for 1 day*. Tap below to activate it now, or use /plans "
+                "later to subscribe to a paid plan."
+            ),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✅ *Profile Complete — Account Created!*\n\nWelcome to MI NEXUS — you're all set.",
+            parse_mode="Markdown"
+        )
+    await send_main_menu(update, context)
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -522,35 +609,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("country_"):
         code = data.replace("country_", "")
         set_user_country(user_id, code)
-        unlock_user(user_id)
 
         restriction_note = ""
         if is_generally_restricted(code):
             restriction_note = (
                 "\n\n⚠️ _Note: Quotex is generally not available in your "
                 "region due to broker/regulatory restrictions — the direct "
-                "Rs/paid-plan path is your best option. Quotex's own "
+                "Rs/paid-plan path may be your best option. Quotex's own "
                 "signup process is the final word on this, not us._"
             )
 
-        if not has_used_trial(user_id):
-            keyboard = [[InlineKeyboardButton("🎁 Start My Free Trial (10 signals / 1 day)", callback_data="start_trial")]]
-            await query.edit_message_text(
-                f"✅ *Account Created!* ({country_label(code)})\n\n"
-                f"Welcome to MI NEXUS — you're all set.\n\n"
-                f"🎁 You have a *free trial* waiting: *10 free signal analyses, "
-                f"valid for 1 day*. Tap below to activate it now, or use /plans "
-                f"later to subscribe to a paid plan.{restriction_note}",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            await query.edit_message_text(
-                f"✅ *Account Created!* ({country_label(code)})\n\n"
-                f"Welcome to MI NEXUS — you're all set.{restriction_note}",
-                parse_mode="Markdown"
-            )
-        await send_main_menu(update, context)
+        keyboard = [
+            [InlineKeyboardButton("✅ Yes, I already have one", callback_data="existquotex_yes")],
+            [InlineKeyboardButton("🆕 No, I'm new to Quotex", callback_data="existquotex_no")],
+        ]
+        await query.edit_message_text(
+            f"🌍 Country set: *{country_label(code)}*{restriction_note}\n\n"
+            f"📊 *Do you already have a Quotex account?*\n\n"
+            f"This helps us know whether you'll be signing up fresh through "
+            f"your MI NEXUS tracking link (for the free deposit-tier path) "
+            f"or already trading on an existing account.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if data.startswith("existquotex_"):
+        has_existing = data.replace("existquotex_", "") == "yes"
+        set_has_existing_quotex_account(user_id, has_existing)
+
+        context.user_data["awaiting_profile_email"] = True
+        await query.edit_message_text(
+            "📧 *What's your email address?*\n\n"
+            "This is kept on your profile for account recovery/support "
+            "purposes — just type it and send.",
+            parse_mode="Markdown"
+        )
+        return
+
+    if data == "skip_profile_photo":
+        context.user_data["awaiting_profile_photo"] = False
+        await _finish_onboarding(update, context, user_id)
         return
 
     if data == "recheck_channels":
@@ -792,6 +891,71 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # ---------------- Plan Status (client-facing) ----------------
+    elif data == "menu_profile":
+        profile = get_user_profile(user_id)
+        country_name = country_label(profile["country"]) if profile["country"] else "Not set"
+        quotex_status = (
+            "Existing account" if profile["has_existing_quotex_account"]
+            else ("New signup" if profile["has_existing_quotex_account"] is False else "Not set")
+        )
+        plan_label = PLAN_LIMITS.get(profile["plan"], {}).get("label", "None") if profile["plan"] else "None"
+
+        keyboard = [
+            [InlineKeyboardButton("🌍 Change Country", callback_data="profedit_country")],
+            [InlineKeyboardButton("📧 Change Email", callback_data="profedit_email")],
+            [InlineKeyboardButton("📸 Change Photo", callback_data="profedit_photo")],
+            [InlineKeyboardButton("⬅ Back", callback_data="menu_back")],
+        ]
+
+        caption = (
+            f"👤 *My Profile*\n\n"
+            f"🆔 Username: @{profile['username'] or 'N/A'}\n"
+            f"🌍 Country: *{country_name}*\n"
+            f"📧 Email: *{profile['email'] or 'Not set'}*\n"
+            f"📊 Quotex: *{quotex_status}*\n"
+            f"💳 Plan: *{plan_label}*"
+        )
+
+        if profile["profile_photo_url"]:
+            try:
+                await query.message.reply_photo(
+                    photo=profile["profile_photo_url"], caption=caption,
+                    parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                return
+            except Exception:
+                pass  # fall through to text-only if the photo URL fails
+
+        await query.edit_message_text(caption, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "profedit_country":
+        keyboard = []
+        row = []
+        for name, code in COUNTRIES:
+            row.append(InlineKeyboardButton(name, callback_data=f"profcountry_{code}"))
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        await query.edit_message_text(
+            "🌍 *Select your new country:*", parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("profcountry_"):
+        code = data.replace("profcountry_", "")
+        set_user_country(user_id, code)
+        await query.edit_message_text(f"✅ Country updated to *{country_label(code)}*.", parse_mode="Markdown")
+
+    elif data == "profedit_email":
+        context.user_data["awaiting_profile_email_edit"] = True
+        await query.edit_message_text("📧 Send your new email address:")
+
+    elif data == "profedit_photo":
+        context.user_data["awaiting_profile_photo_edit"] = True
+        await query.edit_message_text("📸 Send your new profile picture:")
+
     elif data == "menu_plan_status":
         active_plan = get_active_plan(user_id)
         if active_plan:
@@ -1054,6 +1218,49 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_payment_screenshot(update, context)
         return
 
+    # ---- Route: profile edit photo step (not part of onboarding) ----
+    if context.user_data.get("awaiting_profile_photo_edit"):
+        context.user_data["awaiting_profile_photo_edit"] = False
+        processing = await update.message.reply_text("⏳ Uploading your new profile picture...")
+        try:
+            photo_file = await update.message.photo[-1].get_file()
+            local_path = f"/tmp/mi_nexus_profile_{user.id}.jpg"
+            await photo_file.download_to_drive(local_path)
+            photo_url = upload_image(local_path, name=f"profile_{user.id}")
+            if os.path.exists(local_path):
+                os.remove(local_path)
+            if photo_url:
+                set_user_profile_photo(user.id, photo_url)
+                await processing.edit_text("✅ Profile picture updated!")
+            else:
+                await processing.edit_text("⚠️ Upload failed. Please try again from your profile.")
+        except Exception as e:
+            logger.warning(f"Profile photo edit upload failed: {e}")
+            await processing.edit_text("⚠️ Upload failed. Please try again from your profile.")
+        return
+
+    # ---- Route: onboarding wizard's profile photo step ----
+    if context.user_data.get("awaiting_profile_photo"):
+        context.user_data["awaiting_profile_photo"] = False
+        processing = await update.message.reply_text("⏳ Uploading your profile picture...")
+        try:
+            photo_file = await update.message.photo[-1].get_file()
+            local_path = f"/tmp/mi_nexus_profile_{user.id}.jpg"
+            await photo_file.download_to_drive(local_path)
+            photo_url = upload_image(local_path, name=f"profile_{user.id}")
+            if os.path.exists(local_path):
+                os.remove(local_path)
+            if photo_url:
+                set_user_profile_photo(user.id, photo_url)
+                await processing.edit_text("✅ Profile picture saved!")
+            else:
+                await processing.edit_text("⚠️ Upload failed, but continuing anyway — you can add one later from your profile.")
+        except Exception as e:
+            logger.warning(f"Profile photo upload failed: {e}")
+            await processing.edit_text("⚠️ Upload failed, but continuing anyway.")
+        await _finish_onboarding(update, context, user.id)
+        return
+
     if not is_unlocked(user.id):
         await update.message.reply_text("🔐 Please enter the access password first. Use /start")
         return
@@ -1151,6 +1358,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             candles, rsi_signal=rsi_signal,
             sensitivity=bot_cfg.get("signal_sensitivity", 1.0)
         )
+
+        # ---- Optional AI vision layer (admin-toggleable, off by default) ----
+        if is_ai_analysis_enabled() and is_ai_available():
+            await processing_msg.edit_text(
+                "🤖 *Running AI vision analysis...*\n▓▓▓▓▓▓▓░░░ 70%",
+                parse_mode="Markdown"
+            )
+            ai_result = analyze_chart_with_ai(local_path)
+            prediction = blend_ai_with_local(prediction, ai_result)
+
         tf_code = get_timeframe(user.id)
         tf_label = TF_LABELS.get(tf_code, "1 Min")
         dur_code = get_trade_duration(user.id)
@@ -1219,6 +1436,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if tech_parts:
                 tech_line = f"🧮 Technicals: *{' • '.join(tech_parts)}*\n"
 
+        ai_line = ""
+        ai_result = prediction.get("ai_result")
+        if ai_result:
+            ai_agrees = prediction.get("ai_agrees")
+            agree_symbol = "✅" if ai_agrees else "⚠️"
+            ai_line = (
+                f"🤖 AI Read: *{ai_result['direction']}* ({ai_result['confidence']:.0f}%) {agree_symbol}\n"
+            )
+            if ai_result.get("reasoning"):
+                ai_line += f"   _{ai_result['reasoning']}_\n"
+
         caption = (
             f"💎 *MI NEXUS PREMIUM SIGNAL* 💎\n\n"
             f"{dir_emoji} Direction: *{prediction['direction']}*\n"
@@ -1229,6 +1457,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📈 Market Condition: *{condition_text}*\n"
             f"{rsi_line}"
             f"{tech_line}"
+            f"{ai_line}"
             f"💹 Pair: *{pair_name}*\n\n"
             f"✅ _Trade smart, manage your risk._"
         )
@@ -1500,6 +1729,10 @@ async def show_admin_panel(query_or_update, context):
         ],
         [InlineKeyboardButton(f"🎚️ Signal Tuner ({sensitivity}x)", callback_data="admin_tuner")],
         [InlineKeyboardButton("🔐 Required Channels", callback_data="admin_channels")],
+        [InlineKeyboardButton(
+            f"🤖 AI Analysis: {'🟢 ON' if is_ai_analysis_enabled() else '🔴 OFF'}",
+            callback_data="admin_ai_toggle"
+        )],
         [InlineKeyboardButton("📢 Broadcast Text to All Groups", callback_data="admin_broadcast_text")],
     ]
     text = (
@@ -1743,6 +1976,28 @@ async def handle_admin_callback(query, context, data):
 
     # ---------------- Quotex Deposit Tier Management ----------------
     # ---------------- Required Channels Management ----------------
+    elif data == "admin_ai_toggle":
+        current = is_ai_analysis_enabled()
+        new_state = not current
+        if new_state and not is_ai_available():
+            await query.edit_message_text(
+                "⚠️ *Can't enable AI yet*\n\n"
+                "No Groq API key is configured. Set the `GROQ_API_KEYS` "
+                "(or `GROQ_API_KEY`) environment variable/secret first, "
+                "then try again.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")]])
+            )
+            return
+        set_ai_analysis_enabled(new_state)
+        status = "🟢 ON" if new_state else "🔴 OFF"
+        await query.edit_message_text(
+            f"🤖 *AI Analysis: {status}*\n\n"
+            f"{'Every chart analysis will now also get an AI vision read from Groq, blended with the local pattern engine.' if new_state else 'The bot is back to pure local analysis only — zero API calls.'}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")]])
+        )
+
     elif data == "admin_channels":
         channels = get_required_channels()
         if channels:
@@ -1767,17 +2022,13 @@ async def handle_admin_callback(query, context, data):
     elif data == "chanadd_new":
         context.user_data["awaiting_channel_add"] = True
         await query.edit_message_text(
-            "➕ *Add Required Channel*\n\n"
-            "Send three lines:\n"
-            "`Display Name`\n"
-            "`chat_id or @username`\n"
-            "`invite link (https://t.me/...)`\n\n"
-            "Example:\n"
-            "`MI NEXUS VIP`\n"
-            "`@minexusvip`\n"
+            "➕ *Add Required Channel/Group*\n\n"
+            "Just send the public link, e.g.:\n"
             "`https://t.me/minexusvip`\n\n"
-            "_Tip: the bot must already be a member of that channel/group "
-            "to check who's joined._",
+            "The bot will automatically detect the name and ID.\n\n"
+            "_Important: the bot must already be a member/admin of that "
+            "channel or group, and it must be public (not a private invite "
+            "hash link), for membership checking to work._",
             parse_mode="Markdown"
         )
 
@@ -1959,13 +2210,28 @@ async def error_handler(update, context):
     logger.error("Exception:", exc_info=context.error)
 
 
+async def _post_init(app):
+    """Sets the bottom-left menu button's command list - shown when a
+    user taps the menu icon next to the message input field."""
+    commands = [
+        BotCommand("start", "🚀 Start / Create Account"),
+        BotCommand("menu", "📋 Open Main Menu"),
+        BotCommand("plans", "💎 View Subscription Plans"),
+    ]
+    try:
+        await app.bot.set_my_commands(commands)
+        logger.info("Bot menu commands set successfully.")
+    except Exception as e:
+        logger.warning(f"Failed to set bot menu commands (non-critical): {e}")
+
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is not set!")
 
     init_firebase()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(_post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_command))

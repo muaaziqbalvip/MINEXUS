@@ -52,7 +52,41 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
-## Features (v18 — Country Selection + Regional Pricing, Required-Channel Gate, Real Technical Indicators)
+## Features (v19 — Full Profile System, Optional Groq AI Layer, Simplified Channel Setup)
+
+- 👤 **Full onboarding + Profile system**: account creation is now a
+  wizard — Country → "Do you already have a Quotex account?" → Email →
+  Profile Photo. All of this is saved and viewable/editable anytime via
+  the new **👤 My Profile** menu button (with Change Country / Change
+  Email / Change Photo buttons).
+- 🔗 **Simplified required-channel setup** — admin now just pastes ONE
+  public channel/group link (`/admin` → 🔐 Required Channels → ➕ Add),
+  and the bot automatically looks up its name and ID via Telegram's API —
+  no more manually typing chat IDs. Every member (except the admin) must
+  join it to use the bot.
+- 🤖 **Optional Groq AI vision layer** (`utils/ai_analyzer.py`),
+  admin-toggleable from `/admin` → 🤖 AI Analysis:
+  - **OFF by default** — zero API calls, zero cost, bot behaves exactly
+    as before until explicitly turned on.
+  - **ON**: every chart analysis also gets a second opinion from a Groq
+    vision-language model, blended into (not replacing) the local
+    pattern-engine result — if the AI agrees, confidence gets a modest
+    boost; if it disagrees, confidence is pulled back rather than the
+    direction being flipped outright.
+  - Supports **multiple Groq API keys** (comma-separated in
+    `GROQ_API_KEYS`) with automatic rotation if one key is rate-limited.
+  - Uses the current Groq-recommended vision model
+    (`meta-llama/llama-4-scout-17b-16e-instruct`) — Groq's model lineup
+    changes over time, so double check
+    [console.groq.com/docs/vision](https://console.groq.com/docs/vision)
+    if this needs updating later.
+- 📋 **Bottom-left Telegram menu button** now lists `/start`, `/menu`,
+  `/plans` for quick access (via `setMyCommands`).
+- ⚠️ **Honest note on button colors**: Telegram's native inline buttons
+  still can't have custom background colors (that's controlled by each
+  user's Telegram app theme, not by any bot) — this hasn't changed and
+  isn't something any bot code can override.
+
 
 - 🌍 **Country selection during account creation** — new users pick their
   country from a list before their account unlocks. Pakistan-based users
@@ -415,6 +449,7 @@ Go to: **Repo → Settings → Secrets and variables → Actions → New reposit
 | `FIREBASE_CREDENTIALS_JSON` | Paste the **entire contents** of the service account JSON file from step 2 |
 | `ADMIN_USER_ID` | Your Telegram numeric user ID (get it from @userinfobot) |
 | `IMGBB_API_KEY` | Your imgBB API key from step 3 |
+| `GROQ_API_KEYS` | (Optional) One or more Groq API keys, comma-separated, for the AI vision layer. Get free keys at [console.groq.com](https://console.groq.com). Leave unset if you don't want AI features. |
 
 ### 6. Enable GitHub Actions
 - Go to the **Actions** tab in your repo

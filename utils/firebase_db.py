@@ -111,6 +111,46 @@ def get_user_country(user_id):
     return user.get("country") if user else None
 
 
+def set_has_existing_quotex_account(user_id, has_existing):
+    """Records whether the user says they already had a Quotex account
+    before joining the bot (vs signing up fresh through our link) - useful
+    context for the admin since it affects whether the deposit-tier path
+    via our tracking link will even work for them."""
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({
+        "has_existing_quotex_account": has_existing
+    })
+
+
+def set_user_email(user_id, email):
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({"email": email})
+
+
+def get_user_email(user_id):
+    user = get_user(user_id)
+    return user.get("email") if user else None
+
+
+def set_user_profile_photo(user_id, photo_url):
+    db = init_firebase()
+    db.collection("users").document(str(user_id)).update({"profile_photo_url": photo_url})
+
+
+def get_user_profile(user_id):
+    """Returns the full profile bundle for display on the Profile screen."""
+    user = get_user(user_id) or {}
+    return {
+        "username": user.get("username"),
+        "country": user.get("country"),
+        "email": user.get("email"),
+        "has_existing_quotex_account": user.get("has_existing_quotex_account"),
+        "profile_photo_url": user.get("profile_photo_url"),
+        "joined_at": user.get("joined_at"),
+        "plan": user.get("plan"),
+    }
+
+
 def unlock_user(user_id):
     db = init_firebase()
     db.collection("users").document(str(user_id)).update({"unlocked": True})
@@ -483,6 +523,10 @@ _DEFAULT_CONFIG = {
     # bot. List of dicts: {"name": display name, "chat_id": numeric ID or
     # @username, "url": invite link}. Empty list = no requirement.
     "required_channels": [],
+    # Admin-toggleable: whether AI (Groq vision) analysis runs alongside
+    # the local pattern engine. OFF by default - zero API cost/calls
+    # unless the admin explicitly turns it on.
+    "ai_analysis_enabled": False,
 }
 
 
@@ -608,3 +652,16 @@ def remove_required_channel(chat_id):
     channels = [c for c in channels if c["chat_id"] != chat_id]
     set_bot_config_value("required_channels", channels)
     return channels
+
+
+# ----------------------------------------------------------------------
+# AI ANALYSIS TOGGLE (admin-controlled)
+# ----------------------------------------------------------------------
+def is_ai_analysis_enabled():
+    cfg = get_bot_config()
+    return cfg.get("ai_analysis_enabled", False)
+
+
+def set_ai_analysis_enabled(enabled):
+    set_bot_config_value("ai_analysis_enabled", bool(enabled))
+    return enabled
