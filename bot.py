@@ -354,27 +354,24 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user_id):
         text += "\n\n🛠️ _Admin panel available below._"
 
+    chat_id = update.effective_chat.id
     markup = build_main_menu_keyboard(user_id)
     
     banner = render_menu_banner()
 
     try:
         with open(banner, "rb") as b:
-            if update.callback_query:
-                # Can't edit a text message into a photo directly without risking errors, 
-                # so we delete and send new if it's not already a photo. 
-                # But to be safe and clean, just reply photo and delete old message.
-                await update.callback_query.message.delete()
-                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=b, caption=text, parse_mode="Markdown", reply_markup=markup)
-            else:
-                await update.message.reply_photo(photo=b, caption=text, parse_mode="Markdown", reply_markup=markup)
+            await context.bot.send_photo(
+                chat_id=chat_id, photo=b,
+                caption=text, parse_mode="Markdown", reply_markup=markup
+            )
     except Exception as e:
         logger.warning(f"Failed to send menu banner: {e}")
-        # Fallback to text
-        if update.callback_query:
-            await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
-        else:
-            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+        await context.bot.send_message(
+            chat_id=chat_id, text=text,
+            parse_mode="Markdown", reply_markup=markup
+        )
+
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1003,10 +1000,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "menu_back":
-        await query.edit_message_text(
-            "✨ *MI NEXUS Main Menu*", parse_mode="Markdown",
-            reply_markup=build_main_menu_keyboard(user_id)
-        )
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await send_main_menu(update, context)
 
     elif data == "menu_upgrade_shortcut":
         await query.edit_message_text(
@@ -1015,6 +1013,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "your payment screenshot right here.",
             parse_mode="Markdown"
         )
+
+    elif data == "menu_quotex_link":
+        link = get_quotex_tracking_link(user_id)
+        total_deposit, quotex_limit = get_quotex_deposit_status(user_id)
+        tiers = sorted(get_quotex_tiers(), key=lambda t: t[0])
+        tiers_text = "\n".join(f"• Deposit ${t[0]} → {t[1]} analyses/day" for t in tiers)
+
+        status_text = ""
+        if total_deposit and total_deposit > 0:
+            status_text = f"\n\n📊 Your verified deposit: *${total_deposit:.2f}* → *{quotex_limit or 0} analyses/day*"
 
         await query.edit_message_text(
             f"🔗 *Your Personal Quotex Link*\n\n"
@@ -1027,11 +1035,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "menu_quotex_plan":
         context.user_data["awaiting_quotex_balance"] = True
-        await query.message.delete()
-        await query.message.reply_text(
-            "💵 *Quotex Trading Plan Generator*\n\n"
-            "This will create a custom Money Management strategy for you.\n"
-            "Please enter your current account balance (e.g. `100` or `50`):",
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                "💵 *Quotex Trading Plan Generator*\n\n"
+                "I will create a *custom Money Management* strategy for you.\n\n"
+                "Please type your current account *balance in $* (e.g. `100` or `50`):"
+            ),
             parse_mode="Markdown"
         )
 
