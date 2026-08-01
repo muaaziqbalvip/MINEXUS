@@ -14,46 +14,73 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Find ZIP
+      - name: Find ZIP File
         id: zip
+        shell: bash
         run: |
-          ZIP=$(find . -type f -name "*.zip" | head -n 1)
+          ZIP=$(find . -type f -iname "*.zip" | head -n 1)
+
           if [ -z "$ZIP" ]; then
             echo "No ZIP file found!"
             exit 1
           fi
-          echo "zip=$ZIP" >> $GITHUB_OUTPUT
+
+          echo "Found ZIP: $ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
 
       - name: Extract ZIP
+        shell: bash
         run: |
-          mkdir unzip
-          unzip -o "${{ steps.zip.outputs.zip }}" -d unzip
+          rm -rf unzip
+          mkdir -p unzip
 
-      - name: Remove .github
+          if command -v bsdtar >/dev/null 2>&1; then
+            bsdtar -xf "${{ steps.zip.outputs.zip }}" -C unzip || true
+          else
+            unzip -oq "${{ steps.zip.outputs.zip }}" -d unzip || true
+          fi
+
+          if [ -z "$(find unzip -type f | head -n 1)" ]; then
+            echo "Extraction failed."
+            exit 1
+          fi
+
+      - name: Remove GitHub Folder
         run: |
-          find unzip -type d -name ".github" -exec rm -rf {} +
+          find unzip -type d -name ".github" -exec rm -rf {} + || true
 
       - name: Merge Files
+        shell: bash
         run: |
-          cp -R unzip/. .
+          cp -a unzip/. .
 
       - name: Cleanup
         run: |
           rm -rf unzip
-          find . -maxdepth 1 -name "*.zip" -delete
+          find . -maxdepth 1 -iname "*.zip" -delete
 
-      - name: Commit
+      - name: Commit Changes
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add .
-          git diff --cached --quiet || git commit -m "Auto unzip"
 
-      - name: Push
+          if git diff --cached --quiet; then
+            echo "No changes."
+            exit 0
+          fi
+
+          git commit -m "Auto unzip and merge"
+
+      - name: Push Changes
         uses: ad-m/github-push-action@master
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: main
+          branch: ${{ github.ref_name }}
