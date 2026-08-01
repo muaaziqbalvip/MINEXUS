@@ -460,7 +460,10 @@ def render_result_card(
     card_top = y_cursor
     card_bottom = card_top + 840
     card_box = (40, card_top, CANVAS_W - 40, card_bottom)
-    _drop_shadow(canvas, card_box, radius=32, offset=(0, 14), blur=26, opacity=150)
+    
+    # 3D Neon Glow Behind the card based on direction
+    _drop_shadow(canvas, card_box, radius=32, offset=(0, 0), blur=40, opacity=120)
+    
     draw = ImageDraw.Draw(canvas)
     _bevel_card(draw, card_box, radius=32, fill=CARD_BG,
                 top_light=(120, 255, 180), bottom_dark=(0, 0, 0), width=4)
@@ -712,3 +715,84 @@ def render_result_card(
 
     canvas.convert("RGB").save(output_path, quality=95)
     return output_path
+
+
+def render_menu_banner(output_path="/tmp/mi_nexus_menu.png"):
+    """Generates a beautiful, colorful 3D banner image for the main menu."""
+    w, h = 1080, 720
+    canvas = _vertical_gradient(w, h, (10, 15, 30), (2, 4, 10)).convert("RGBA")
+    _draw_header_texture(canvas)
+    draw = ImageDraw.Draw(canvas)
+    
+    # Draw huge glowing abstract circles in background for "beautiful colorful" look
+    circles = [
+        ((w*0.8, -h*0.2), 400, (255, 60, 120, 40)),  # Pink
+        ((w*0.2, h*0.8), 350, (60, 255, 140, 40)),   # Green
+        ((w*0.5, h*0.5), 250, (60, 120, 255, 40)),   # Blue
+    ]
+    for (cx, cy), r, color in circles:
+        glow = Image.new("RGBA", (w, h), (0,0,0,0))
+        gdraw = ImageDraw.Draw(glow)
+        gdraw.ellipse((cx-r, cy-r, cx+r, cy+r), fill=color)
+        glow = glow.filter(ImageFilter.GaussianBlur(80))
+        canvas.alpha_composite(glow)
+        
+    font_large = _font(FONT_BOLD, 80)
+    font_sub = _font(FONT_REG, 35)
+    
+    _glow_text(canvas, (w//2, h//2 - 60), "MI NEXUS PRO v20", font_large, (255,255,255), (60, 255, 140), glow_radius=15, anchor="mm")
+    
+    _glossy_3d_badge(canvas, (w//2 - 250, h//2 + 30, w//2 + 250, h//2 + 100), radius=35, accent=(60, 120, 255))
+    draw = ImageDraw.Draw(canvas)
+    draw.text((w//2, h//2 + 65), "THE ULTIMATE TRADING AI", font=font_sub, fill=(255,255,255), anchor="mm")
+    
+    canvas.convert("RGB").save(output_path, quality=95)
+    return output_path
+
+
+def render_result_stamp(image_path, result_type):
+    """
+    Overlays a giant WIN/LOSS stamp on an existing signal card image.
+    result_type: 'win' or 'loss'
+    """
+    img = Image.open(image_path).convert("RGBA")
+    w, h = img.size
+    
+    stamp_layer = Image.new("RGBA", (w, h), (0,0,0,0))
+    draw = ImageDraw.Draw(stamp_layer)
+    
+    if result_type == "win":
+        color = (60, 255, 140, 220)
+        text = "🏆 TRADE WON"
+        bg_overlay = (10, 50, 20, 140)
+    else:
+        color = (255, 60, 80, 220)
+        text = "💔 TRADE LOST"
+        bg_overlay = (50, 10, 20, 140)
+        
+    # Darken background slightly to make stamp pop
+    draw.rectangle((0, 0, w, h), fill=bg_overlay)
+    
+    font_size = 100
+    font = _font(FONT_BOLD, font_size)
+    text_w = draw.textlength(text, font=font)
+    
+    cx, cy = w // 2, h // 2 - 100
+    
+    # Stamp border
+    padding = 40
+    box = (cx - text_w/2 - padding, cy - font_size/2 - padding, cx + text_w/2 + padding, cy + font_size/2 + padding)
+    draw.rounded_rectangle(box, radius=30, outline=color, width=15)
+    
+    # Text
+    draw.text((cx, cy), text, font=font, fill=color, anchor="mm")
+    
+    # Rotate stamp slightly for dynamic effect
+    stamp_layer = stamp_layer.rotate(15, center=(cx, cy), resample=Image.BICUBIC)
+    
+    # Composite
+    img.alpha_composite(stamp_layer)
+    
+    out_path = image_path.replace(".png", f"_{result_type}.png")
+    img.convert("RGB").save(out_path, quality=95)
+    return out_path

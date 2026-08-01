@@ -487,6 +487,108 @@ def compute_trend_strength(candles, period=8):
     }
 
 
+def compute_stochastic(candles, k_period=14, d_period=3):
+    """
+    Stochastic Oscillator approximation.
+    Returns %K, %D and bias (bullish/bearish/neutral).
+    """
+    if len(candles) < k_period + d_period:
+        return {"k": 50, "d": 50, "bias": "neutral"}
+        
+    recent_k = candles[-(k_period + d_period):]
+    k_values = []
+    
+    # Calculate %K for the last d_period candles
+    for i in range(d_period):
+        window = recent_k[i: i + k_period]
+        if not window:
+            continue
+        current_close = _price_mid(window[-1])
+        highest_high = min(c.wick_top for c in window)  # smallest y = highest price
+        lowest_low = max(c.wick_bottom for c in window) # largest y = lowest price
+        
+        # Inverted y coordinates!
+        # price = lowest_low (large y) to highest_high (small y)
+        range_y = lowest_low - highest_high
+        if range_y == 0:
+            k = 50
+        else:
+            # (Current Close - Lowest Low) / (Highest High - Lowest Low) * 100
+            # Because y is inverted: lowest low has LARGEST y.
+            k = ((lowest_low - current_close) / range_y) * 100
+        k_values.append(k)
+        
+    if not k_values:
+        return {"k": 50, "d": 50, "bias": "neutral"}
+        
+    current_k = k_values[-1]
+    current_d = sum(k_values) / len(k_values)
+    
+    if current_k > 80 and current_d > 80:
+        bias = "bearish" # Overbought
+    elif current_k < 20 and current_d < 20:
+        bias = "bullish" # Oversold
+    elif current_k > current_d:
+        bias = "bullish"
+    elif current_k < current_d:
+        bias = "bearish"
+    else:
+        bias = "neutral"
+        
+    return {
+        "k": round(current_k, 1),
+        "d": round(current_d, 1),
+        "bias": bias
+    }
+
+
+def compute_parabolic_sar(candles):
+    """
+    Simplified Parabolic SAR trend approximation.
+    """
+    if len(candles) < 3:
+        return {"bias": "neutral"}
+        
+    # Simplified SAR: check if recent closes are consistently pushing in one direction
+    bull_count = sum(1 for c in candles[-3:] if c.is_bullish())
+    bear_count = sum(1 for c in candles[-3:] if c.is_bearish())
+    
+    if bull_count == 3:
+        bias = "bullish"
+    elif bear_count == 3:
+        bias = "bearish"
+    else:
+        bias = "neutral"
+        
+    return {"bias": bias}
+
+
+def compute_ichimoku(candles):
+    """
+    Ichimoku Cloud approximation (Tenkan-sen / Kijun-sen cross).
+    """
+    if len(candles) < 26:
+        return {"bias": "neutral"}
+        
+    def _donchian(window):
+        hh = min(c.wick_top for c in window)
+        ll = max(c.wick_bottom for c in window)
+        return (hh + ll) / 2
+        
+    tenkan = _donchian(candles[-9:])
+    kijun = _donchian(candles[-26:])
+    
+    # In y-coords, smaller y = higher price. 
+    # Tenkan > Kijun in price means Tenkan < Kijun in y-coords (bullish).
+    if tenkan < kijun:
+        bias = "bullish"
+    elif tenkan > kijun:
+        bias = "bearish"
+    else:
+        bias = "neutral"
+        
+    return {"bias": bias}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MASTER CONFLUENCE FUNCTION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -507,6 +609,9 @@ def get_technical_confluence(candles):
     atr_data = compute_atr(candles)
     volume = compute_volume_proxy(candles)
     trend_strength = compute_trend_strength(candles)
+    stoch = compute_stochastic(candles)
+    sar = compute_parabolic_sar(candles)
+    ichimoku = compute_ichimoku(candles)
 
     rsi_bias = "neutral"
     if rsi is not None:
@@ -518,7 +623,11 @@ def get_technical_confluence(candles):
     recent_fractal_type = fractals[-1]["type"] if fractals else None
 
     # Enhanced confluence count for display
-    signals = [ma_trend, structure_bias, rsi_bias, macd["bias"], bollinger["bias"], volume["bias"]]
+    signals = [
+        ma_trend, structure_bias, rsi_bias, macd["bias"], 
+        bollinger["bias"], volume["bias"], stoch["bias"], 
+        sar["bias"], ichimoku["bias"]
+    ]
     bull_signals = signals.count("bullish")
     bear_signals = signals.count("bearish")
 
@@ -557,4 +666,9 @@ def get_technical_confluence(candles):
         "bull_signal_count": bull_signals,
         "bear_signal_count": bear_signals,
         "overall_bias": overall_bias,
+        
+        # New V20
+        "stoch_bias": stoch["bias"],
+        "sar_bias": sar["bias"],
+        "ichimoku_bias": ichimoku["bias"],
     }
