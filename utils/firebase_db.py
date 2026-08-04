@@ -330,6 +330,54 @@ def get_win_loss_stats(user_id):
 
 
 # ----------------------------------------------------------------------
+# GROUP SIGNAL VOTING (community WIN/LOSE poll under broadcast signals)
+# ----------------------------------------------------------------------
+def create_group_vote(signal_id, chat_id=None, direction=None, confidence=None):
+    """Initializes a vote-tally doc for a signal that was broadcast to a
+    group. Members can tap WIN/LOSE and results are tallied live."""
+    db = init_firebase()
+    db.collection("group_votes").document(signal_id).set({
+        "chat_id": chat_id,
+        "direction": direction,
+        "confidence": confidence,
+        "voters": {},          # user_id(str) -> "WIN" | "LOSE"
+        "created_at": _now_iso(),
+    })
+    return signal_id
+
+
+def register_group_vote(signal_id, user_id, choice):
+    """Registers/updates a single user's vote (one vote per user, can be
+    changed by tapping the other button). Returns (win_count, lose_count)."""
+    db = init_firebase()
+    ref = db.collection("group_votes").document(signal_id)
+    doc = ref.get()
+    if not doc.exists:
+        ref.set({"voters": {}, "created_at": _now_iso()})
+        doc = ref.get()
+
+    data = doc.to_dict() or {}
+    voters = data.get("voters", {})
+    voters[str(user_id)] = choice.upper()
+    ref.update({"voters": voters})
+
+    win_count = sum(1 for v in voters.values() if v == "WIN")
+    lose_count = sum(1 for v in voters.values() if v == "LOSE")
+    return win_count, lose_count
+
+
+def get_group_vote_counts(signal_id):
+    db = init_firebase()
+    doc = db.collection("group_votes").document(signal_id).get()
+    if not doc.exists:
+        return 0, 0
+    voters = (doc.to_dict() or {}).get("voters", {})
+    win_count = sum(1 for v in voters.values() if v == "WIN")
+    lose_count = sum(1 for v in voters.values() if v == "LOSE")
+    return win_count, lose_count
+
+
+# ----------------------------------------------------------------------
 # SUBSCRIPTION PLANS + DAILY USAGE LIMITS
 # ----------------------------------------------------------------------
 PLAN_LIMITS = {

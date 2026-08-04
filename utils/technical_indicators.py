@@ -12,6 +12,11 @@ v2 Additions:
   - Volume proxy from candle body sizes (larger body ≈ more volume)
   - Enhanced confluence scorer with 6 signals instead of 4
   - Trend momentum strength (how strong is the current trend impulse?)
+
+v3 Additions:
+  - Stochastic Oscillator (%K/%D) — catches overbought/oversold setups
+    that RSI misses (price *position* in range, not just speed of change)
+  - Confluence scorer now runs 7 signals for a sharper majority vote
 """
 
 
@@ -383,6 +388,46 @@ def compute_atr(candles, period=14):
     }
 
 
+def compute_stochastic(candles, k_period=14, d_period=3):
+    """
+    Stochastic Oscillator (%K / %D): measures where the current close sits
+    relative to the recent high-low range. Complements RSI — RSI tracks the
+    speed/magnitude of price changes, Stochastic tracks price *position*,
+    so together they catch different overbought/oversold setups.
+
+    Returns %K (0-100), %D (3-period SMA of %K), and a bias:
+      - >80  = overbought  -> "bearish" nudge (reversal down likely)
+      - <20  = oversold    -> "bullish" nudge (reversal up likely)
+      - else = "neutral"
+    """
+    if len(candles) < k_period + d_period:
+        return {"k": None, "d": None, "bias": "neutral"}
+
+    def _k_at(end_index):
+        window = candles[end_index - k_period + 1: end_index + 1]
+        highest_high_y = min(_price_high(c) for c in window)   # smallest y = highest price
+        lowest_low_y = max(_price_low(c) for c in window)      # largest y = lowest price
+        close_y = _price_mid(candles[end_index])
+        span = lowest_low_y - highest_high_y
+        if span <= 0:
+            return 50.0
+        return max(0.0, min(100.0, (lowest_low_y - close_y) / span * 100))
+
+    n = len(candles)
+    k_values = [_k_at(i) for i in range(n - d_period, n)]
+    k = k_values[-1]
+    d = sum(k_values) / len(k_values)
+
+    if k >= 80 and d >= 80:
+        bias = "bearish"
+    elif k <= 20 and d <= 20:
+        bias = "bullish"
+    else:
+        bias = "neutral"
+
+    return {"k": round(k, 1), "d": round(d, 1), "bias": bias}
+
+
 def compute_volume_proxy(candles, period=8):
     """
     Approximates volume from candle body sizes.
@@ -507,6 +552,7 @@ def get_technical_confluence(candles):
     atr_data = compute_atr(candles)
     volume = compute_volume_proxy(candles)
     trend_strength = compute_trend_strength(candles)
+    stochastic = compute_stochastic(candles)
 
     rsi_bias = "neutral"
     if rsi is not None:
@@ -517,8 +563,9 @@ def get_technical_confluence(candles):
 
     recent_fractal_type = fractals[-1]["type"] if fractals else None
 
-    # Enhanced confluence count for display
-    signals = [ma_trend, structure_bias, rsi_bias, macd["bias"], bollinger["bias"], volume["bias"]]
+    # Enhanced confluence count for display (v3: adds Stochastic %K/%D)
+    signals = [ma_trend, structure_bias, rsi_bias, macd["bias"], bollinger["bias"],
+               volume["bias"], stochastic["bias"]]
     bull_signals = signals.count("bullish")
     bear_signals = signals.count("bearish")
 
@@ -552,6 +599,11 @@ def get_technical_confluence(candles):
         "trend_strength": trend_strength["strength"],
         "trend_strength_label": trend_strength["label"],
         "trend_direction": trend_strength["direction"],
+
+        # New v3 keys
+        "stochastic_k": stochastic["k"],
+        "stochastic_d": stochastic["d"],
+        "stochastic_bias": stochastic["bias"],
 
         # Summary
         "bull_signal_count": bull_signals,

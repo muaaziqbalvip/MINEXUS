@@ -18,6 +18,27 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
+## 🆕 What's New — v20 (Community Vote + Stochastic Engine)
+
+- 🗳️ **Group WIN/LOSE community vote** — every signal posted to a group now
+  carries two live buttons, **✅ WIN** and **❌ LOSE**, right under the
+  image. Anyone in the group can tap one; the button labels update in real
+  time with the vote count and percentage for both admin-broadcast and
+  auto-broadcast signals. Each group's poll is tracked independently (a
+  signal sent to 3 groups gets 3 separate tallies, never mixed), one vote
+  per person, and switching your vote just moves it from one column to the
+  other. See `build_group_vote_keyboard()` in `bot.py` and the
+  `group_votes` collection in `utils/firebase_db.py`.
+- 📈 **Stochastic Oscillator added to the confidence engine** — a 7th
+  technical signal (`utils/technical_indicators.py::compute_stochastic`)
+  now joins RSI/MACD/Bollinger/MA/ZigZag/Volume in the confluence vote.
+  Stochastic reads *where price sits in its recent range* rather than the
+  *speed* of the move RSI tracks, so it catches overbought/oversold setups
+  RSI alone can miss — an extra, independent check before the bot commits
+  to a direction. It also now shows on the signal card (`Stoch NN(OB/OS)`).
+
+---
+
 ## 🆕 What's New — v13 (Pro Upgrade)
 
 - 🎁 **Free Trial System** — every new account gets a one-time offer:

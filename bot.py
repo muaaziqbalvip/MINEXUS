@@ -55,6 +55,7 @@ from utils.firebase_db import (
     set_user_profile_photo, get_user_profile,
     is_ai_analysis_enabled, set_ai_analysis_enabled,
     get_required_channels, add_required_channel, remove_required_channel,
+    create_group_vote, register_group_vote, get_group_vote_counts,
 )
 import asyncio
 
@@ -257,6 +258,21 @@ async def play_intro_animation(update: Update, context: ContextTypes.DEFAULT_TYP
         await msg.delete()
     except Exception as e:
         logger.warning(f"Intro animation failed (non-critical): {e}")
+
+
+def build_group_vote_keyboard(vote_id, win_count=0, lose_count=0):
+    """Community WIN/LOSE poll shown under a signal broadcast to a group.
+    Anyone in the group can tap to vote on the outcome; counts update live
+    on the button labels for everyone to see."""
+    total = win_count + lose_count
+    win_pct = round((win_count / total) * 100) if total else 0
+    lose_pct = 100 - win_pct if total else 0
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"✅ WIN ({win_count} · {win_pct}%)", callback_data=f"gvote_win_{vote_id}"),
+            InlineKeyboardButton(f"❌ LOSE ({lose_count} · {lose_pct}%)", callback_data=f"gvote_lose_{vote_id}"),
+        ]
+    ])
 
 
 def build_main_menu_keyboard(user_id):
@@ -1172,6 +1188,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         signal_caption = context.user_data.get("last_signal_caption")
         signal_direction = context.user_data.get("last_signal_direction")
         signal_confidence = context.user_data.get("last_signal_confidence")
+        signal_id = context.user_data.get("last_signal_id") or f"anon_{user_id}_{int(datetime.now().timestamp())}"
 
         if not signal_path or not os.path.exists(signal_path):
             await query.edit_message_text("⚠️ Signal expired. Please analyze a new chart.")
@@ -1190,10 +1207,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent_count = 0
         for chat_id, title in targets:
             try:
+                # Each group gets its own vote poll, so WIN/LOSE tallies from
+                # different groups never mix together.
+                vote_id = f"{signal_id}_{chat_id}"
+                create_group_vote(vote_id, chat_id=chat_id, direction=signal_direction,
+                                   confidence=signal_confidence)
+                vote_keyboard = build_group_vote_keyboard(vote_id)
+
                 with open(signal_path, "rb") as img:
                     await context.bot.send_photo(
                         chat_id=chat_id, photo=img,
-                        caption=signal_caption, parse_mode="Markdown"
+                        caption=signal_caption, parse_mode="Markdown",
+                        reply_markup=vote_keyboard,
                     )
                 if sticker_path and os.path.exists(sticker_path):
                     with open(sticker_path, "rb") as sticker:
@@ -1202,7 +1227,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Failed to broadcast to {chat_id}: {e}")
 
-        await query.edit_message_text(f"✅ Signal + sticker sent to {sent_count} group(s)!")
+        await query.edit_message_text(
+            f"✅ Signal + sticker sent to {sent_count} group(s)!\n"
+            f"🗳️ WIN/LOSE vote buttons are live under each post."
+        )
 
     # ---------------- Win / Loss Result ----------------
     elif data.startswith("result_"):
@@ -1253,6 +1281,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if sent:
                 await query.message.reply_text(f"📢 Also posted to {sent} group(s).")
+
+    # ---------------- Group community WIN/LOSE vote ----------------
+    elif data.startswith("gvote_"):
+        try:
+            _, choice, vote_id = data.split("_", 2)
+        except ValueError:
+            return
+        win_count, lose_count = register_group_vote(vote_id, user_id, choice)
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=build_group_vote_keyboard(vote_id, win_count, lose_count)
+            )
+        except Exception as e:
+            # Telegram raises "message not modified" if the counts didn't
+            # actually change (e.g. user re-taps the same choice) — harmless.
+            logger.debug(f"gvote markup update skipped: {e}")
 
 
 async def _check_required_channels(context: ContextTypes.DEFAULT_TYPE, user_id):
@@ -1537,6 +1581,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tech.get("bollinger_position") and tech["bollinger_position"] != "middle":
             bb = tech["bollinger_position"].replace("_", " ").title()
             tech_parts.append(f"BB: {bb[:10]}")
+        if tech.get("stochastic_k") is not None and tech.get("stochastic_bias") != "neutral":
+            stoch_zone = "OB" if tech["stochastic_bias"] == "bearish" else "OS"
+            tech_parts.append(f"Stoch {tech['stochastic_k']}({stoch_zone})")
         if tech.get("trend_strength_label"):
             tech_parts.append(tech["trend_strength_label"])
         tech_line = f"\n🧮 *Technicals:* `{'  |  '.join(tech_parts)}`" if tech_parts else ""
@@ -1640,10 +1687,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             auto_bc, selected_group = get_auto_broadcast_settings(user.id)
             if auto_bc and selected_group:
                 try:
+                    auto_vote_id = f"{log_id}_{selected_group}"
+                    create_group_vote(auto_vote_id, chat_id=selected_group,
+                                       direction=prediction["direction"],
+                                       confidence=prediction["confidence"])
                     with open(output_path, "rb") as img:
                         await context.bot.send_photo(
                             chat_id=selected_group, photo=img,
-                            caption=caption, parse_mode="Markdown"
+                            caption=caption, parse_mode="Markdown",
+                            reply_markup=build_group_vote_keyboard(auto_vote_id),
                         )
                     if sticker_path:
                         with open(sticker_path, "rb") as sticker:
