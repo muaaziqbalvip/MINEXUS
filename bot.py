@@ -288,24 +288,24 @@ def build_main_menu_keyboard(user_id):
 
     # ── SETTINGS ────────────────────────────────────────────────────
     settings_row = [
-        InlineKeyboardButton("⏱ Timeframe", callback_data="menu_timeframe"),
-        InlineKeyboardButton("⏳ Trade Duration", callback_data="menu_trade_duration"),
+        InlineKeyboardButton("⏱ Timeframe", style="primary", callback_data="menu_timeframe"),
+        InlineKeyboardButton("⏳ Trade Duration", style="primary", callback_data="menu_trade_duration"),
     ]
 
     # ── ACCOUNT ─────────────────────────────────────────────────────
     account_row1 = [
-        InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
-        InlineKeyboardButton("👤 My Profile", callback_data="menu_profile"),
+        InlineKeyboardButton("📊 My Stats", style="primary", callback_data="menu_stats"),
+        InlineKeyboardButton("👤 My Profile", style="primary", callback_data="menu_profile"),
     ]
     account_row2 = [
-        InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status"),
+        InlineKeyboardButton("💳 My Plan", style="primary", callback_data="menu_plan_status"),
         InlineKeyboardButton("🔥 Upgrade Plan", style="primary", callback_data="menu_upgrade_shortcut"),
     ]
 
     # ── RESOURCES ───────────────────────────────────────────────────
     resources_row = [
-        InlineKeyboardButton("📖 Full Guide", callback_data="menu_help"),
-        InlineKeyboardButton("🔗 Free Quotex Link", callback_data="menu_quotex_link"),
+        InlineKeyboardButton("📖 Full Guide", style="primary", callback_data="menu_help"),
+        InlineKeyboardButton("🔗 Free Quotex Link", style="primary", callback_data="menu_quotex_link"),
     ]
 
     keyboard = [
@@ -326,10 +326,10 @@ def build_main_menu_keyboard(user_id):
         keyboard.append([InlineKeyboardButton("━━━ 🛠️ ADMIN ━━━", callback_data="menu_noop")])
         keyboard.append([
             InlineKeyboardButton(f"📢 Broadcast: {bc_status}", style=("success" if auto_bc else "danger"), callback_data="menu_broadcast_settings"),
-            InlineKeyboardButton("🎬 Session", callback_data="menu_session_start"),
+            InlineKeyboardButton("🎬 Session", style="primary", callback_data="menu_session_start"),
         ])
         keyboard.append([
-            InlineKeyboardButton("👥 Groups", callback_data="menu_groups"),
+            InlineKeyboardButton("👥 Groups", style="primary", callback_data="menu_groups"),
             InlineKeyboardButton("🛠️ Admin Panel", style="primary", callback_data="admin_open"),
         ])
 
@@ -409,7 +409,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         set_user_email(user.id, email)
         context.user_data["awaiting_profile_photo"] = True
-        keyboard = [[InlineKeyboardButton("⏭️ Skip This Step", callback_data="skip_profile_photo")]]
+        keyboard = [[InlineKeyboardButton("⏭️ Skip This Step", style="danger", callback_data="skip_profile_photo")]]
         await update.message.reply_text(
             "📸 *Last step — send a profile picture*\n\n"
             "This will show on your MI NEXUS profile. Just send any photo, "
@@ -708,7 +708,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "recheck_channels":
         missing = await _check_required_channels(context, user_id)
         if missing:
-            keyboard = [[InlineKeyboardButton(f"📢 Join {ch['name']}", url=ch['url'])] for ch in missing]
+            keyboard = [[InlineKeyboardButton(f"📢 Join {ch['name']}", style="primary", url=ch['url'])] for ch in missing]
             keyboard.append([InlineKeyboardButton("✅ I've Joined — Check Again", style="success", callback_data="recheck_channels")])
             await query.edit_message_text(
                 "❌ *Still Missing*\n\nYou haven't joined all required "
@@ -813,7 +813,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         row = []
         for i, (label, code) in enumerate(TIMEFRAME_OPTIONS):
-            row.append(InlineKeyboardButton(label, callback_data=f"tf_{code}"))
+            row.append(InlineKeyboardButton(label, style="primary", callback_data=f"tf_{code}"))
             if len(row) == 2:
                 keyboard.append(row)
                 row = []
@@ -839,7 +839,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         row = []
         for i, (label, code) in enumerate(TRADE_DURATION_OPTIONS):
-            row.append(InlineKeyboardButton(label, callback_data=f"dur_{code}"))
+            row.append(InlineKeyboardButton(label, style="primary", callback_data=f"dur_{code}"))
             if len(row) == 3:
                 keyboard.append(row)
                 row = []
@@ -876,23 +876,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "menu_stats":
-        wins, losses = get_win_loss_stats(user_id)
-        total_trades = wins + losses
-        win_rate = round((wins / total_trades) * 100, 1) if total_trades > 0 else 0
-
-        active_plan = get_active_plan(user_id)
-        plan_label = PLAN_LIMITS.get(active_plan, {}).get("label", "No active plan") if active_plan else "No active plan"
-
-        await query.edit_message_text(
-            f"📊 *Your Stats*\n\n"
-            f"💳 Plan: *{plan_label}*\n\n"
-            f"🎯 Trades Recorded: *{total_trades}*\n"
-            f"✅ Wins: *{wins}*\n"
-            f"❌ Losses: *{losses}*\n"
-            f"📈 Win Rate: *{win_rate}%*\n\n"
-            f"_Tap ✅ WIN or ❌ LOSS after each signal to keep this updated._",
-            parse_mode="Markdown"
-        )
+        await query.edit_message_text(build_stats_text(user_id), parse_mode="Markdown")
 
     elif data == "menu_groups":
         groups = list_groups()
@@ -906,54 +890,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_help":
         keyboard = [[InlineKeyboardButton("⬅ Back to Menu", style="danger", callback_data="menu_back")]]
         await query.edit_message_text(
-            "📖 *MI NEXUS — COMPLETE GUIDE* 📖\n\n"
-            "*━━━ STEP 1: Get Your Signal ━━━*\n"
-            "📸 Take a screenshot of your chart (Quotex or any platform) "
-            "showing at least 5-6 recent candles clearly.\n"
-            "Send it directly to this chat.\n\n"
-
-            "*━━━ STEP 2: Read The Signal Card ━━━*\n"
-            "⬆️⬇️ *Direction* — predicted next-candle move (UP/DOWN)\n"
-            "📊 *Confidence %* — how strong the signal is (54-96%)\n"
-            "🔥 *Strength* — WEAK / MODERATE / STRONG / VERY STRONG\n"
-            "🕯️ *Patterns* — which candlestick patterns were detected\n"
-            "📈 *Market Condition* — Clean Trend / Mixed / Choppy\n"
-            "📉 *RSI Zone* — Overbought/Oversold/Neutral, if detected\n\n"
-
-            "*━━━ STEP 3: Decide Whether To Trade ━━━*\n"
-            "✅ Best conditions to enter:\n"
-            "  • Confidence 72%+ (STRONG or VERY STRONG)\n"
-            "  • Market Condition = Clean Trend\n"
-            "  • RSI agrees with the direction (if shown)\n\n"
-            "⚠️ Be cautious / consider skipping when:\n"
-            "  • Confidence is below 62% (WEAK)\n"
-            "  • Market Condition = Choppy\n"
-            "  • RSI disagrees with the pattern direction\n\n"
-
-            "*━━━ STEP 4: Set Your Timeframe ━━━*\n"
-            "Use ⏱ Change Timeframe in the menu to match your trade "
-            "duration (5 sec up to 1 hour) — this is shown on your card "
-            "for reference.\n\n"
-
-            "*━━━ STEP 5: Place Your Trade ━━━*\n"
-            "Open your broker platform, select the same pair as your "
-            "chart, and place the trade in the *same direction* as the "
-            "signal, for your chosen timeframe.\n\n"
-
-            "*━━━ STEP 6: Log Your Result ━━━*\n"
-            "After the trade closes, come back and tap ✅ WIN or ❌ LOSS "
-            "under your signal — this updates your personal stats "
-            "(📊 My Stats) so you can track your performance over time.\n\n"
-
-            "*━━━ Risk Management Tips ━━━*\n"
-            "• Never risk more than you can afford to lose\n"
-            "• Don't chase losses with bigger trades\n"
-            "• Skip choppy/low-confidence signals — waiting is a valid choice\n"
-            "• Treat this as ONE input among many, not a guarantee\n\n"
-
-            "⚠️ *Disclaimer:* This is a technical pattern-analysis tool. "
-            "No prediction system — human or automated — can guarantee "
-            "market outcomes. Trade responsibly and at your own risk.",
+            HELP_TEXT,
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -1002,9 +939,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         plan_label = PLAN_LIMITS.get(profile["plan"], {}).get("label", "None") if profile["plan"] else "None"
 
         keyboard = [
-            [InlineKeyboardButton("🌍 Change Country", callback_data="profedit_country")],
-            [InlineKeyboardButton("📧 Change Email", callback_data="profedit_email")],
-            [InlineKeyboardButton("📸 Change Photo", callback_data="profedit_photo")],
+            [InlineKeyboardButton("🌍 Change Country", style="primary", callback_data="profedit_country")],
+            [InlineKeyboardButton("📧 Change Email", style="primary", callback_data="profedit_email")],
+            [InlineKeyboardButton("📸 Change Photo", style="primary", callback_data="profedit_photo")],
             [InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_back")],
         ]
 
@@ -1130,7 +1067,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "autobc_pick_group":
         groups = list_groups()
-        keyboard = [[InlineKeyboardButton(title, callback_data=f"autobc_set_{chat_id}")]
+        keyboard = [[InlineKeyboardButton(title, style="primary", callback_data=f"autobc_set_{chat_id}")]
                     for chat_id, title in groups[:10]]
         keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_broadcast_settings")])
         await query.edit_message_text(
@@ -1162,7 +1099,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
             return
-        keyboard = [[InlineKeyboardButton(title, callback_data=f"sessionpick_{chat_id}")]
+        keyboard = [[InlineKeyboardButton(title, style="primary", callback_data=f"sessionpick_{chat_id}")]
                     for chat_id, title in groups[:10]]
         keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_back")])
         await query.edit_message_text(
@@ -1398,7 +1335,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(user.id):
         missing = await _check_required_channels(context, user.id)
         if missing:
-            keyboard = [[InlineKeyboardButton(f"📢 Join {ch['name']}", url=ch['url'])] for ch in missing]
+            keyboard = [[InlineKeyboardButton(f"📢 Join {ch['name']}", style="primary", url=ch['url'])] for ch in missing]
             keyboard.append([InlineKeyboardButton("✅ I've Joined — Check Again", style="success", callback_data="recheck_channels")])
             await update.message.reply_text(
                 "🔒 *Join Required*\n\n"
@@ -1584,6 +1521,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tech.get("stochastic_k") is not None and tech.get("stochastic_bias") != "neutral":
             stoch_zone = "OB" if tech["stochastic_bias"] == "bearish" else "OS"
             tech_parts.append(f"Stoch {tech['stochastic_k']}({stoch_zone})")
+        if tech.get("chart_pattern_name"):
+            tech_parts.append(f"⚡ {tech['chart_pattern_name']}")
         if tech.get("trend_strength_label"):
             tech_parts.append(tech["trend_strength_label"])
         tech_line = f"\n🧮 *Technicals:* `{'  |  '.join(tech_parts)}`" if tech_parts else ""
@@ -1778,7 +1717,7 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     trial_btn = []
     if not active_plan and not has_used_trial(user.id):
-        trial_btn = [InlineKeyboardButton("🎁 Free Trial — 10 signals / 1 day", callback_data="start_trial")]
+        trial_btn = [InlineKeyboardButton("🎁 Free Trial — 10 signals / 1 day", style="success", callback_data="start_trial")]
 
     rs_plan_buttons = [
         [InlineKeyboardButton("💵 Basic — Rs 500/mo (15/day)", style="primary", callback_data="plan_basic")],
@@ -1921,24 +1860,25 @@ async def show_admin_panel(query_or_update, context):
     sensitivity = cfg.get("signal_sensitivity", 1.0)
     keyboard = [
         [
-            InlineKeyboardButton(f"💰 Pending Payments ({len(pending)})", callback_data="admin_pending"),
-            InlineKeyboardButton("📷 Set Plan QR Codes", callback_data="admin_setqr"),
+            InlineKeyboardButton(f"💰 Pending Payments ({len(pending)})", style="primary", callback_data="admin_pending"),
+            InlineKeyboardButton("📷 Set Plan QR Codes", style="primary", callback_data="admin_setqr"),
         ],
         [
-            InlineKeyboardButton("🚫 Manage Members", callback_data="admin_members"),
-            InlineKeyboardButton("👥 Connected Groups", callback_data="menu_groups"),
+            InlineKeyboardButton("🚫 Manage Members", style="danger", callback_data="admin_members"),
+            InlineKeyboardButton("👥 Connected Groups", style="primary", callback_data="menu_groups"),
         ],
         [
-            InlineKeyboardButton("💹 Quotex Deposit Tiers", callback_data="admin_quotex_tiers"),
-            InlineKeyboardButton("📊 Quotex Users", callback_data="admin_quotex_users"),
+            InlineKeyboardButton("💹 Quotex Deposit Tiers", style="primary", callback_data="admin_quotex_tiers"),
+            InlineKeyboardButton("📊 Quotex Users", style="primary", callback_data="admin_quotex_users"),
         ],
-        [InlineKeyboardButton(f"🎚️ Signal Tuner ({sensitivity}x)", callback_data="admin_tuner")],
-        [InlineKeyboardButton("🔐 Required Channels", callback_data="admin_channels")],
+        [InlineKeyboardButton(f"🎚️ Signal Tuner ({sensitivity}x)", style="primary", callback_data="admin_tuner")],
+        [InlineKeyboardButton("🔐 Required Channels", style="primary", callback_data="admin_channels")],
         [InlineKeyboardButton(
             f"🤖 AI Analysis: {'🟢 ON' if is_ai_analysis_enabled() else '🔴 OFF'}",
+            style=("success" if is_ai_analysis_enabled() else "danger"),
             callback_data="admin_ai_toggle"
         )],
-        [InlineKeyboardButton("📢 Broadcast Text to All Groups", callback_data="admin_broadcast_text")],
+        [InlineKeyboardButton("📢 Broadcast Text to All Groups", style="primary", callback_data="admin_broadcast_text")],
     ]
     text = (
         "🛠️ *MI NEXUS Admin Panel*\n\n"
@@ -1996,12 +1936,12 @@ async def render_member_list(query, context, page=0):
 
     nav_row = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton("⬅ Prev", callback_data=f"memberpage_{page - 1}"))
+        nav_row.append(InlineKeyboardButton("⬅ Prev", style="danger", callback_data=f"memberpage_{page - 1}"))
     if page < total_pages - 1:
-        nav_row.append(InlineKeyboardButton("Next ➡", callback_data=f"memberpage_{page + 1}"))
+        nav_row.append(InlineKeyboardButton("Next ➡", style="primary", callback_data=f"memberpage_{page + 1}"))
     if nav_row:
         keyboard.append(nav_row)
-    keyboard.append([InlineKeyboardButton("⬅ Back to Admin Panel", callback_data="admin_back_panel")])
+    keyboard.append([InlineKeyboardButton("⬅ Back to Admin Panel", style="danger", callback_data="admin_back_panel")])
 
     await query.edit_message_text(
         "\n\n".join(lines), parse_mode="Markdown",
@@ -2026,11 +1966,11 @@ async def render_signal_tuner(query, context):
 
     keyboard = [
         [
-            InlineKeyboardButton("➖ Decrease", callback_data="tuner_down"),
-            InlineKeyboardButton("🔄 Reset (1.0x)", callback_data="tuner_reset"),
-            InlineKeyboardButton("➕ Increase", callback_data="tuner_up"),
+            InlineKeyboardButton("➖ Decrease", style="danger", callback_data="tuner_down"),
+            InlineKeyboardButton("🔄 Reset (1.0x)", style="primary", callback_data="tuner_reset"),
+            InlineKeyboardButton("➕ Increase", style="success", callback_data="tuner_up"),
         ],
-        [InlineKeyboardButton("⬅ Back to Admin Panel", callback_data="admin_back_panel")],
+        [InlineKeyboardButton("⬅ Back to Admin Panel", style="danger", callback_data="admin_back_panel")],
     ]
     await query.edit_message_text(
         f"🎚️ *Signal Sensitivity Tuner*\n\n"
@@ -2210,10 +2150,10 @@ async def handle_admin_callback(query, context, data):
         else:
             lines = "_No required channels set — bot is open to everyone._"
         keyboard = [
-            [InlineKeyboardButton(f"🗑️ Remove {c['name']}", callback_data=f"chanrm_{c['chat_id']}")]
+            [InlineKeyboardButton(f"🗑️ Remove {c['name']}", style="danger", callback_data=f"chanrm_{c['chat_id']}")]
             for c in channels
         ]
-        keyboard.append([InlineKeyboardButton("➕ Add Required Channel", callback_data="chanadd_new")])
+        keyboard.append([InlineKeyboardButton("➕ Add Required Channel", style="success", callback_data="chanadd_new")])
         keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_back_panel")])
         await query.edit_message_text(
             f"🔐 *Required Channels/Groups*\n\n{lines}\n\n"
@@ -2246,10 +2186,10 @@ async def handle_admin_callback(query, context, data):
         tiers = sorted(get_quotex_tiers(), key=lambda t: t[0])
         lines = "\n".join(f"• ${t[0]} → {t[1]} analyses/day" for t in tiers)
         keyboard = [
-            [InlineKeyboardButton(f"✏️ Edit ${t[0]} tier", callback_data=f"quotexedit_{t[0]}")]
+            [InlineKeyboardButton(f"✏️ Edit ${t[0]} tier", style="primary", callback_data=f"quotexedit_{t[0]}")]
             for t in tiers
         ]
-        keyboard.append([InlineKeyboardButton("➕ Add New Tier", callback_data="quotexedit_new")])
+        keyboard.append([InlineKeyboardButton("➕ Add New Tier", style="success", callback_data="quotexedit_new")])
         keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_back_panel")])
         await query.edit_message_text(
             f"💹 *Quotex Deposit Tiers*\n\n{lines}\n\n"
@@ -2330,9 +2270,9 @@ async def handle_admin_callback(query, context, data):
 
     elif data == "admin_setqr":
         keyboard = [
-            [InlineKeyboardButton("Basic Plan QR", callback_data="setqr_basic")],
-            [InlineKeyboardButton("Pro Plan QR", callback_data="setqr_pro")],
-            [InlineKeyboardButton("Unlimited Plan QR", callback_data="setqr_unlimited")],
+            [InlineKeyboardButton("Basic Plan QR", style="primary", callback_data="setqr_basic")],
+            [InlineKeyboardButton("Pro Plan QR", style="primary", callback_data="setqr_pro")],
+            [InlineKeyboardButton("Unlimited Plan QR", style="success", callback_data="setqr_unlimited")],
         ]
         await query.edit_message_text(
             "📷 *Select which plan's QR code to update:*",
@@ -2415,6 +2355,89 @@ async def error_handler(update, context):
     logger.error("Exception:", exc_info=context.error)
 
 
+HELP_TEXT = (
+    "📖 *MI NEXUS — COMPLETE GUIDE* 📖\n\n"
+    "*━━━ STEP 1: Get Your Signal ━━━*\n"
+    "📸 Take a screenshot of your chart (Quotex or any platform) "
+    "showing at least 5-6 recent candles clearly.\n"
+    "Send it directly to this chat.\n\n"
+
+    "*━━━ STEP 2: Read The Signal Card ━━━*\n"
+    "⬆️⬇️ *Direction* — predicted next-candle move (UP/DOWN)\n"
+    "📊 *Confidence %* — how strong the signal is (54-96%)\n"
+    "🔥 *Strength* — WEAK / MODERATE / STRONG / VERY STRONG\n"
+    "🕯️ *Patterns* — which candlestick patterns were detected\n"
+    "📈 *Market Condition* — Clean Trend / Mixed / Choppy\n"
+    "📉 *RSI Zone* — Overbought/Oversold/Neutral, if detected\n\n"
+
+    "*━━━ STEP 3: Decide Whether To Trade ━━━*\n"
+    "✅ Best conditions to enter:\n"
+    "  • Confidence 72%+ (STRONG or VERY STRONG)\n"
+    "  • Market Condition = Clean Trend\n"
+    "  • RSI agrees with the direction (if shown)\n\n"
+    "⚠️ Be cautious / consider skipping when:\n"
+    "  • Confidence is below 62% (WEAK)\n"
+    "  • Market Condition = Choppy\n"
+    "  • RSI disagrees with the pattern direction\n\n"
+
+    "*━━━ STEP 4: Set Your Timeframe ━━━*\n"
+    "Use ⏱ Change Timeframe in the menu to match your trade "
+    "duration (5 sec up to 1 hour) — this is shown on your card "
+    "for reference.\n\n"
+
+    "*━━━ STEP 5: Place Your Trade ━━━*\n"
+    "Open your broker platform, select the same pair as your "
+    "chart, and place the trade in the *same direction* as the "
+    "signal, for your chosen timeframe.\n\n"
+
+    "*━━━ STEP 6: Log Your Result ━━━*\n"
+    "After the trade closes, come back and tap ✅ WIN or ❌ LOSS "
+    "under your signal — this updates your personal stats "
+    "(📊 My Stats) so you can track your performance over time.\n\n"
+
+    "*━━━ Risk Management Tips ━━━*\n"
+    "• Never risk more than you can afford to lose\n"
+    "• Don't chase losses with bigger trades\n"
+    "• Skip choppy/low-confidence signals — waiting is a valid choice\n"
+    "• Treat this as ONE input among many, not a guarantee\n\n"
+
+    "⚠️ *Disclaimer:* This is a technical pattern-analysis tool. "
+    "No prediction system — human or automated — can guarantee "
+    "market outcomes. Trade responsibly and at your own risk."
+)
+
+
+def build_stats_text(user_id):
+    wins, losses = get_win_loss_stats(user_id)
+    total_trades = wins + losses
+    win_rate = round((wins / total_trades) * 100, 1) if total_trades > 0 else 0
+
+    active_plan = get_active_plan(user_id)
+    plan_label = PLAN_LIMITS.get(active_plan, {}).get("label", "No active plan") if active_plan else "No active plan"
+
+    return (
+        f"📊 *Your Stats*\n\n"
+        f"💳 Plan: *{plan_label}*\n\n"
+        f"🎯 Trades Recorded: *{total_trades}*\n"
+        f"✅ Wins: *{wins}*\n"
+        f"❌ Losses: *{losses}*\n"
+        f"📈 Win Rate: *{win_rate}%*\n\n"
+        f"_Tap ✅ WIN or ❌ LOSS after each signal to keep this updated._"
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type in ("group", "supergroup"):
+        return
+    await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type in ("group", "supergroup"):
+        return
+    await update.message.reply_text(build_stats_text(update.effective_user.id), parse_mode="Markdown")
+
+
 async def _post_init(app):
     """Sets the bottom-left menu button's command list - shown when a
     user taps the menu icon next to the message input field."""
@@ -2422,6 +2445,8 @@ async def _post_init(app):
         BotCommand("start", "🚀 Start / Create Account"),
         BotCommand("menu", "📋 Open Main Menu"),
         BotCommand("plans", "💎 View Subscription Plans"),
+        BotCommand("stats", "📊 My Win/Loss Stats"),
+        BotCommand("help", "📖 Full Guide — How To Use MI NEXUS"),
     ]
     try:
         await app.bot.set_my_commands(commands)
@@ -2441,6 +2466,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("plans", plans_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("finduser", finduser_command))
     app.add_handler(CallbackQueryHandler(button_handler))

@@ -17,6 +17,12 @@ v3 Additions:
   - Stochastic Oscillator (%K/%D) — catches overbought/oversold setups
     that RSI misses (price *position* in range, not just speed of change)
   - Confluence scorer now runs 7 signals for a sharper majority vote
+
+v4 Additions:
+  - Double Top / Double Bottom chart-pattern detector (built on the
+    existing ZigZag swing points) — a classic multi-candle reversal
+    structure that's a different signal class from candlestick patterns
+  - Confluence scorer now runs 8 signals
 """
 
 
@@ -388,6 +394,46 @@ def compute_atr(candles, period=14):
     }
 
 
+def detect_double_top_bottom(candles, tolerance_pct=1.5):
+    """
+    Classic chart-pattern reversal detector: scans the ZigZag swing points
+    for two peaks (or two troughs) at roughly the same price level — the
+    textbook Double Top / Double Bottom reversal setup. This looks at
+    *structure across many candles*, which is a different signal class
+    from the single/multi-candle candlestick patterns already covered —
+    it catches setups those miss entirely.
+    Returns {"pattern": "Double Top"|"Double Bottom"|None, "bias": ...}.
+    """
+    swings, _ = compute_zigzag(candles)
+    if len(swings) < 3:
+        return {"pattern": None, "bias": "neutral"}
+
+    highs = [s for s in swings if s["type"] == "high"]
+    lows = [s for s in swings if s["type"] == "low"]
+    result = {"pattern": None, "bias": "neutral", "_last_index": -1}
+
+    if len(highs) >= 2:
+        h1, h2 = highs[-2], highs[-1]
+        y1 = _price_mid(candles[h1["index"]])
+        y2 = _price_mid(candles[h2["index"]])
+        avg = (y1 + y2) / 2
+        diff_pct = abs(y1 - y2) / max(1, avg) * 100
+        if diff_pct <= tolerance_pct:
+            result = {"pattern": "Double Top", "bias": "bearish", "_last_index": h2["index"]}
+
+    if len(lows) >= 2:
+        l1, l2 = lows[-2], lows[-1]
+        y1 = _price_mid(candles[l1["index"]])
+        y2 = _price_mid(candles[l2["index"]])
+        avg = (y1 + y2) / 2
+        diff_pct = abs(y1 - y2) / max(1, avg) * 100
+        if diff_pct <= tolerance_pct and l2["index"] > result["_last_index"]:
+            result = {"pattern": "Double Bottom", "bias": "bullish", "_last_index": l2["index"]}
+
+    result.pop("_last_index", None)
+    return result
+
+
 def compute_stochastic(candles, k_period=14, d_period=3):
     """
     Stochastic Oscillator (%K / %D): measures where the current close sits
@@ -553,6 +599,7 @@ def get_technical_confluence(candles):
     volume = compute_volume_proxy(candles)
     trend_strength = compute_trend_strength(candles)
     stochastic = compute_stochastic(candles)
+    chart_pattern = detect_double_top_bottom(candles)
 
     rsi_bias = "neutral"
     if rsi is not None:
@@ -563,9 +610,9 @@ def get_technical_confluence(candles):
 
     recent_fractal_type = fractals[-1]["type"] if fractals else None
 
-    # Enhanced confluence count for display (v3: adds Stochastic %K/%D)
+    # Enhanced confluence count for display (v4: adds Double Top/Bottom chart pattern)
     signals = [ma_trend, structure_bias, rsi_bias, macd["bias"], bollinger["bias"],
-               volume["bias"], stochastic["bias"]]
+               volume["bias"], stochastic["bias"], chart_pattern["bias"]]
     bull_signals = signals.count("bullish")
     bear_signals = signals.count("bearish")
 
@@ -604,6 +651,10 @@ def get_technical_confluence(candles):
         "stochastic_k": stochastic["k"],
         "stochastic_d": stochastic["d"],
         "stochastic_bias": stochastic["bias"],
+
+        # New v4 keys
+        "chart_pattern_name": chart_pattern["pattern"],
+        "chart_pattern_bias": chart_pattern["bias"],
 
         # Summary
         "bull_signal_count": bull_signals,

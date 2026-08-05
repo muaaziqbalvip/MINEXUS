@@ -821,15 +821,16 @@ def predict_next_candle(candles, rsi_signal=None, sensitivity=1.0):
     tech_disagree_count = 0
     pattern_direction = "bullish" if final_score >= 0 else "bearish"
 
-    # v3: check 7 signals instead of 6
+    # v4: check 8 signals instead of 7
     tech_signals = [
         tech.get("ma_trend"),
         tech.get("zigzag_structure_bias"),
         tech.get("rsi_bias"),
-        tech.get("macd_bias"),        # v2
-        tech.get("bollinger_bias"),   # v2
-        tech.get("volume_bias"),      # v2
-        tech.get("stochastic_bias"),  # v3 — position-in-range confirmation
+        tech.get("macd_bias"),          # v2
+        tech.get("bollinger_bias"),     # v2
+        tech.get("volume_bias"),        # v2
+        tech.get("stochastic_bias"),    # v3 — position-in-range confirmation
+        tech.get("chart_pattern_bias"), # v4 — Double Top/Bottom structure
     ]
     for tech_signal in tech_signals:
         if tech_signal == pattern_direction:

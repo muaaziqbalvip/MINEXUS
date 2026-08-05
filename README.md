@@ -18,6 +18,32 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
+## 🆕 What's New — v22 (Full Colors + Chat Menu + Double Top/Bottom)
+
+- 🎨 **All buttons now colored** — 99 of the bot's 107 buttons carry a real
+  `style` (only section-header dividers and long dynamic lists like
+  country/user pickers stay neutral, since color has no meaning there).
+- 📋 **Bigger bottom chat-menu** — the `/` command list next to the message
+  box now also includes `/stats` (your win/loss record) and `/help` (the
+  full guide), both usable directly as commands, not just menu buttons.
+- 📐 **Double Top / Double Bottom detector** — a new chart-pattern signal
+  (`utils/technical_indicators.py::detect_double_top_bottom`) built on the
+  existing ZigZag swing points. This is a *different signal class* from
+  candlestick patterns — it reads multi-candle price structure, not single
+  candle shapes — so it catches reversal setups the pattern library alone
+  can miss. Confluence engine is now at 8 signals.
+- 🖼️ Signal card gets a small ⚡ tag when a Double Top/Bottom is detected.
+
+**Note on "premium" custom emoji icons:** Telegram only allows bots to
+attach custom/premium emoji icons to buttons if the bot owner has an
+active Telegram Premium subscription, or the bot has purchased an
+additional username on Fragment (paid, often 1000+ TON). This is a
+Telegram-side account requirement, not something achievable through code
+alone — the bot already uses rich standard Unicode emoji everywhere,
+which render identically for all users at no cost.
+
+---
+
 ## 🆕 What's New — v21 (Real Colored Buttons)
 
 - 🎨 **Native colored buttons** — Telegram's Bot API 9.4 (Feb 9, 2026) added
