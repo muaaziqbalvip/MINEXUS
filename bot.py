@@ -212,7 +212,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # First-time users get a guaranteed animation clip for a strong first impression
         await maybe_send_intro_video(update, context, force=True)
 
-        keyboard = [[InlineKeyboardButton("🚀 Create Account / Login", callback_data="account_login")]]
+        keyboard = [[InlineKeyboardButton("🚀 Create Account / Login", style="success", callback_data="account_login")]]
         await update.message.reply_text(
             "💎 *Welcome to MI NEXUS* 💎\n\n"
             "The world's most advanced local chart pattern analyzer.\n\n"
@@ -269,8 +269,8 @@ def build_group_vote_keyboard(vote_id, win_count=0, lose_count=0):
     lose_pct = 100 - win_pct if total else 0
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"✅ WIN ({win_count} · {win_pct}%)", callback_data=f"gvote_win_{vote_id}"),
-            InlineKeyboardButton(f"❌ LOSE ({lose_count} · {lose_pct}%)", callback_data=f"gvote_lose_{vote_id}"),
+            InlineKeyboardButton(f"✅ WIN ({win_count} · {win_pct}%)", style="success", callback_data=f"gvote_win_{vote_id}"),
+            InlineKeyboardButton(f"❌ LOSE ({lose_count} · {lose_pct}%)", style="danger", callback_data=f"gvote_lose_{vote_id}"),
         ]
     ])
 
@@ -282,8 +282,8 @@ def build_main_menu_keyboard(user_id):
 
     # ── TRADING CENTER ──────────────────────────────────────────────
     trading_row = [
-        InlineKeyboardButton("📸 Quick Analyze", callback_data="menu_quick_analyze"),
-        InlineKeyboardButton("🤖 AI Deep Scan", callback_data="menu_ai_deepscan"),
+        InlineKeyboardButton("📸 Quick Analyze", style="primary", callback_data="menu_quick_analyze"),
+        InlineKeyboardButton("🤖 AI Deep Scan", style="primary", callback_data="menu_ai_deepscan"),
     ]
 
     # ── SETTINGS ────────────────────────────────────────────────────
@@ -299,7 +299,7 @@ def build_main_menu_keyboard(user_id):
     ]
     account_row2 = [
         InlineKeyboardButton("💳 My Plan", callback_data="menu_plan_status"),
-        InlineKeyboardButton("🔥 Upgrade Plan", callback_data="menu_upgrade_shortcut"),
+        InlineKeyboardButton("🔥 Upgrade Plan", style="primary", callback_data="menu_upgrade_shortcut"),
     ]
 
     # ── RESOURCES ───────────────────────────────────────────────────
@@ -325,12 +325,12 @@ def build_main_menu_keyboard(user_id):
         bc_status = "🟢 ON" if auto_bc else "🔴 OFF"
         keyboard.append([InlineKeyboardButton("━━━ 🛠️ ADMIN ━━━", callback_data="menu_noop")])
         keyboard.append([
-            InlineKeyboardButton(f"📢 Broadcast: {bc_status}", callback_data="menu_broadcast_settings"),
+            InlineKeyboardButton(f"📢 Broadcast: {bc_status}", style=("success" if auto_bc else "danger"), callback_data="menu_broadcast_settings"),
             InlineKeyboardButton("🎬 Session", callback_data="menu_session_start"),
         ])
         keyboard.append([
             InlineKeyboardButton("👥 Groups", callback_data="menu_groups"),
-            InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_open"),
+            InlineKeyboardButton("🛠️ Admin Panel", style="primary", callback_data="admin_open"),
         ])
 
     return InlineKeyboardMarkup(keyboard)
@@ -574,7 +574,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # No account yet - prompt them to the Create Account / Login button instead
-    keyboard = [[InlineKeyboardButton("🚀 Create Account / Login", callback_data="account_login")]]
+    keyboard = [[InlineKeyboardButton("🚀 Create Account / Login", style="success", callback_data="account_login")]]
     await update.message.reply_text(
         "👋 You don't have an account yet — tap below to get started, no password needed.",
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -598,7 +598,7 @@ async def _finish_onboarding(update: Update, context, user_id):
     unlock_user(user_id)
 
     if not has_used_trial(user_id):
-        keyboard = [[InlineKeyboardButton("🎁 Start My Free Trial (10 signals / 1 day)", callback_data="start_trial")]]
+        keyboard = [[InlineKeyboardButton("🎁 Start My Free Trial (10 signals / 1 day)", style="success", callback_data="start_trial")]]
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=(
@@ -673,8 +673,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         keyboard = [
-            [InlineKeyboardButton("✅ Yes, I already have one", callback_data="existquotex_yes")],
-            [InlineKeyboardButton("🆕 No, I'm new to Quotex", callback_data="existquotex_no")],
+            [InlineKeyboardButton("✅ Yes, I already have one", style="success", callback_data="existquotex_yes")],
+            [InlineKeyboardButton("🆕 No, I'm new to Quotex", style="primary", callback_data="existquotex_no")],
         ]
         await query.edit_message_text(
             f"🌍 Country set: *{country_label(code)}*{restriction_note}\n\n"
@@ -709,7 +709,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         missing = await _check_required_channels(context, user_id)
         if missing:
             keyboard = [[InlineKeyboardButton(f"📢 Join {ch['name']}", url=ch['url'])] for ch in missing]
-            keyboard.append([InlineKeyboardButton("✅ I've Joined — Check Again", callback_data="recheck_channels")])
+            keyboard.append([InlineKeyboardButton("✅ I've Joined — Check Again", style="success", callback_data="recheck_channels")])
             await query.edit_message_text(
                 "❌ *Still Missing*\n\nYou haven't joined all required "
                 "channel(s)/group(s) yet:",
@@ -776,7 +776,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "_Send your screenshot now ↓_",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")]
+                [InlineKeyboardButton("⬅ Back to Menu", style="danger", callback_data="menu_back")]
             ])
         )
 
@@ -789,7 +789,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Standard local analysis (100+ patterns + indicators) is still fully active.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")]
+                    [InlineKeyboardButton("⬅ Back to Menu", style="danger", callback_data="menu_back")]
                 ])
             )
         else:
@@ -804,8 +804,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"before concluding a direction._",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📸 Send Chart Now", callback_data="menu_quick_analyze")],
-                    [InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")],
+                    [InlineKeyboardButton("📸 Send Chart Now", style="primary", callback_data="menu_quick_analyze")],
+                    [InlineKeyboardButton("⬅ Back to Menu", style="danger", callback_data="menu_back")],
                 ])
             )
 
@@ -819,7 +819,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 row = []
         if row:
             keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_back")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_back")])
         await query.edit_message_text(
             "⏱ *Select Prediction Timeframe*\n\nThis is how far ahead the next candle prediction applies:",
             parse_mode="Markdown",
@@ -845,7 +845,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 row = []
         if row:
             keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_back")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_back")])
 
         current = get_trade_duration(user_id)
         current_label = DURATION_LABELS.get(current, "1 Min")
@@ -904,7 +904,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="Markdown")
 
     elif data == "menu_help":
-        keyboard = [[InlineKeyboardButton("⬅ Back to Menu", callback_data="menu_back")]]
+        keyboard = [[InlineKeyboardButton("⬅ Back to Menu", style="danger", callback_data="menu_back")]]
         await query.edit_message_text(
             "📖 *MI NEXUS — COMPLETE GUIDE* 📖\n\n"
             "*━━━ STEP 1: Get Your Signal ━━━*\n"
@@ -988,7 +988,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"analysis limit unlocks automatically after depositing:\n{tiers_text}"
             f"{status_text}",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Open My Quotex Link", url=link)]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Open My Quotex Link", style="primary", url=link)]])
         )
 
     # ---------------- Plan Status (client-facing) ----------------
@@ -1005,7 +1005,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🌍 Change Country", callback_data="profedit_country")],
             [InlineKeyboardButton("📧 Change Email", callback_data="profedit_email")],
             [InlineKeyboardButton("📸 Change Photo", callback_data="profedit_photo")],
-            [InlineKeyboardButton("⬅ Back", callback_data="menu_back")],
+            [InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_back")],
         ]
 
         caption = (
@@ -1072,7 +1072,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             if not has_used_trial(user_id):
-                tkb = [[InlineKeyboardButton("🎁 Start Free Trial", callback_data="start_trial")]]
+                tkb = [[InlineKeyboardButton("🎁 Start Free Trial", style="success", callback_data="start_trial")]]
                 await query.edit_message_text(
                     "💳 *No Active Plan*\n\n"
                     "You don't have a subscription yet — try your *free trial* "
@@ -1113,10 +1113,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = []
         if auto_bc:
-            keyboard.append([InlineKeyboardButton("🔴 Turn OFF Auto-Broadcast", callback_data="autobc_off")])
+            keyboard.append([InlineKeyboardButton("🔴 Turn OFF Auto-Broadcast", style="danger", callback_data="autobc_off")])
         else:
-            keyboard.append([InlineKeyboardButton("🟢 Turn ON Auto-Broadcast", callback_data="autobc_pick_group")])
-        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_back")])
+            keyboard.append([InlineKeyboardButton("🟢 Turn ON Auto-Broadcast", style="success", callback_data="autobc_pick_group")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_back")])
 
         await query.edit_message_text(
             f"📢 *Auto-Broadcast Settings*\n\n"
@@ -1132,7 +1132,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         groups = list_groups()
         keyboard = [[InlineKeyboardButton(title, callback_data=f"autobc_set_{chat_id}")]
                     for chat_id, title in groups[:10]]
-        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_broadcast_settings")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_broadcast_settings")])
         await query.edit_message_text(
             "👥 *Select the group for auto-broadcast:*",
             parse_mode="Markdown",
@@ -1164,7 +1164,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         keyboard = [[InlineKeyboardButton(title, callback_data=f"sessionpick_{chat_id}")]
                     for chat_id, title in groups[:10]]
-        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="menu_back")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="menu_back")])
         await query.edit_message_text(
             "🎬 *Post Session Start*\n\nSelect which group to post to:",
             parse_mode="Markdown",
@@ -1399,7 +1399,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         missing = await _check_required_channels(context, user.id)
         if missing:
             keyboard = [[InlineKeyboardButton(f"📢 Join {ch['name']}", url=ch['url'])] for ch in missing]
-            keyboard.append([InlineKeyboardButton("✅ I've Joined — Check Again", callback_data="recheck_channels")])
+            keyboard.append([InlineKeyboardButton("✅ I've Joined — Check Again", style="success", callback_data="recheck_channels")])
             await update.message.reply_text(
                 "🔒 *Join Required*\n\n"
                 "Please join the channel(s)/group(s) below to use MI NEXUS, "
@@ -1415,7 +1415,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not allowed:
             if plan_id is None:
                 if not has_used_trial(user.id):
-                    keyboard = [[InlineKeyboardButton("🎁 Start Free Trial (10 signals / 1 day)", callback_data="start_trial")]]
+                    keyboard = [[InlineKeyboardButton("🎁 Start Free Trial (10 signals / 1 day)", style="success", callback_data="start_trial")]]
                     await update.message.reply_text(
                         "🔒 *No Active Plan*\n\n"
                         "You need an active subscription to analyze charts — "
@@ -1711,9 +1711,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 groups = list_groups()
                 if groups:
                     keyboard = [[InlineKeyboardButton(
-                        f"📢 Send to {title}", callback_data=f"broadcast_{chat_id}"
+                        f"📢 Send to {title}", style="primary", callback_data=f"broadcast_{chat_id}"
                     )] for chat_id, title in groups[:8]]
-                    keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", callback_data="broadcast_all")])
+                    keyboard.append([InlineKeyboardButton("📢 Send to ALL Groups", style="success", callback_data="broadcast_all")])
                     await update.message.reply_text(
                         "Want to share this signal to your groups?",
                         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1721,8 +1721,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ---- WIN / LOSS result buttons (personal record for everyone) ----
         result_keyboard = [[
-            InlineKeyboardButton("✅ WIN", callback_data=f"result_WIN_{log_id}"),
-            InlineKeyboardButton("❌ LOSS", callback_data=f"result_LOSS_{log_id}"),
+            InlineKeyboardButton("✅ WIN", style="success", callback_data=f"result_WIN_{log_id}"),
+            InlineKeyboardButton("❌ LOSS", style="danger", callback_data=f"result_LOSS_{log_id}"),
         ]]
         await update.message.reply_text(
             "📋 *After your trade closes, tap the result to log it:*",
@@ -1781,11 +1781,11 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         trial_btn = [InlineKeyboardButton("🎁 Free Trial — 10 signals / 1 day", callback_data="start_trial")]
 
     rs_plan_buttons = [
-        [InlineKeyboardButton("💵 Basic — Rs 500/mo (15/day)", callback_data="plan_basic")],
-        [InlineKeyboardButton("💰 Pro — Rs 1000/mo (35/day)", callback_data="plan_pro")],
-        [InlineKeyboardButton("👑 Unlimited — Rs 5000/mo", callback_data="plan_unlimited")],
+        [InlineKeyboardButton("💵 Basic — Rs 500/mo (15/day)", style="primary", callback_data="plan_basic")],
+        [InlineKeyboardButton("💰 Pro — Rs 1000/mo (35/day)", style="primary", callback_data="plan_pro")],
+        [InlineKeyboardButton("👑 Unlimited — Rs 5000/mo", style="success", callback_data="plan_unlimited")],
     ]
-    quotex_button = [InlineKeyboardButton("🌐 Open My Quotex Link", url=link)]
+    quotex_button = [InlineKeyboardButton("🌐 Open My Quotex Link", style="primary", url=link)]
 
     if region == "pk":
         # Pakistan: Rs plans are the primary, familiar path
@@ -1890,8 +1890,8 @@ async def handle_payment_screenshot(update: Update, context: ContextTypes.DEFAUL
 
     # Notify admin with approve/reject buttons
     keyboard = [[
-        InlineKeyboardButton("✅ Approve", callback_data=f"payapprove_{payment_id}"),
-        InlineKeyboardButton("❌ Reject", callback_data=f"payreject_{payment_id}"),
+        InlineKeyboardButton("✅ Approve", style="success", callback_data=f"payapprove_{payment_id}"),
+        InlineKeyboardButton("❌ Reject", style="danger", callback_data=f"payreject_{payment_id}"),
     ]]
     try:
         await context.bot.send_photo(
@@ -1985,13 +1985,13 @@ async def render_member_list(query, context, page=0):
 
         row = []
         if u.get("blocked"):
-            row.append(InlineKeyboardButton("✅ Unblock", callback_data=f"unblockuser_{uid}"))
+            row.append(InlineKeyboardButton("✅ Unblock", style="success", callback_data=f"unblockuser_{uid}"))
         else:
-            row.append(InlineKeyboardButton("🚫 Block", callback_data=f"blockuser_{uid}"))
+            row.append(InlineKeyboardButton("🚫 Block", style="danger", callback_data=f"blockuser_{uid}"))
         if u.get("frozen"):
-            row.append(InlineKeyboardButton("🔥 Unfreeze", callback_data=f"unfreezeuser_{uid}"))
+            row.append(InlineKeyboardButton("🔥 Unfreeze", style="success", callback_data=f"unfreezeuser_{uid}"))
         else:
-            row.append(InlineKeyboardButton("🧊 Freeze", callback_data=f"freezeuser_{uid}"))
+            row.append(InlineKeyboardButton("🧊 Freeze", style="danger", callback_data=f"freezeuser_{uid}"))
         keyboard.append(row)
 
     nav_row = []
@@ -2072,13 +2072,13 @@ async def finduser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         row = []
         if u.get("blocked"):
-            row.append(InlineKeyboardButton("✅ Unblock", callback_data=f"unblockuser_{uid}"))
+            row.append(InlineKeyboardButton("✅ Unblock", style="success", callback_data=f"unblockuser_{uid}"))
         else:
-            row.append(InlineKeyboardButton("🚫 Block", callback_data=f"blockuser_{uid}"))
+            row.append(InlineKeyboardButton("🚫 Block", style="danger", callback_data=f"blockuser_{uid}"))
         if u.get("frozen"):
-            row.append(InlineKeyboardButton("🔥 Unfreeze", callback_data=f"unfreezeuser_{uid}"))
+            row.append(InlineKeyboardButton("🔥 Unfreeze", style="success", callback_data=f"unfreezeuser_{uid}"))
         else:
-            row.append(InlineKeyboardButton("🧊 Freeze", callback_data=f"freezeuser_{uid}"))
+            row.append(InlineKeyboardButton("🧊 Freeze", style="danger", callback_data=f"freezeuser_{uid}"))
 
         await update.message.reply_text(
             f"👤 *{u.get('username')}* (`{uid}`)\n"
@@ -2191,7 +2191,7 @@ async def handle_admin_callback(query, context, data):
                 "(or `GROQ_API_KEY`) environment variable/secret first, "
                 "then try again.",
                 parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_back_panel")]])
             )
             return
         set_ai_analysis_enabled(new_state)
@@ -2200,7 +2200,7 @@ async def handle_admin_callback(query, context, data):
             f"🤖 *AI Analysis: {status}*\n\n"
             f"{'Every chart analysis will now also get an AI vision read from Groq, blended with the local pattern engine.' if new_state else 'The bot is back to pure local analysis only — zero API calls.'}",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_back_panel")]])
         )
 
     elif data == "admin_channels":
@@ -2214,7 +2214,7 @@ async def handle_admin_callback(query, context, data):
             for c in channels
         ]
         keyboard.append([InlineKeyboardButton("➕ Add Required Channel", callback_data="chanadd_new")])
-        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_back_panel")])
         await query.edit_message_text(
             f"🔐 *Required Channels/Groups*\n\n{lines}\n\n"
             f"_Users must join ALL of these before they can analyze charts. "
@@ -2250,7 +2250,7 @@ async def handle_admin_callback(query, context, data):
             for t in tiers
         ]
         keyboard.append([InlineKeyboardButton("➕ Add New Tier", callback_data="quotexedit_new")])
-        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_back_panel")])
         await query.edit_message_text(
             f"💹 *Quotex Deposit Tiers*\n\n{lines}\n\n"
             f"_Tap a tier to change its daily-analysis limit, or add a new one._",
@@ -2286,7 +2286,7 @@ async def handle_admin_callback(query, context, data):
                 "📊 *Quotex Users*\n\nNo users have registered via a Quotex "
                 "link yet.",
                 parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_back_panel")]])
             )
             return
 
@@ -2296,7 +2296,7 @@ async def handle_admin_callback(query, context, data):
                 callback_data=f"quotexuser_{u['user_id']}"
             )] for u in users[:20]
         ]
-        keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="admin_back_panel")])
+        keyboard.append([InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_back_panel")])
         await query.edit_message_text(
             f"📊 *Quotex Users* ({len(users)} total)\n\n"
             f"_Tap a user for their full deposit/withdrawal breakdown._",
@@ -2325,7 +2325,7 @@ async def handle_admin_callback(query, context, data):
             f"*{profile['daily_limit'] or 0} analyses/day*\n"
             f"🕐 Last Deposit: {profile['last_deposit_at'] or 'N/A'}",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="admin_quotex_users")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", style="danger", callback_data="admin_quotex_users")]])
         )
 
     elif data == "admin_setqr":

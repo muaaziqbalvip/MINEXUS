@@ -611,11 +611,13 @@ def compute_market_choppiness(candles, lookback=8):
 
 def compute_support_resistance_context(candles, lookback=12):
     """
-    Checks whether the most recent candle is trading near the recent
-    swing high (resistance) or swing low (support). Being near resistance
-    slightly favors a pullback (bearish), near support slightly favors a
-    bounce (bullish) — this is a soft contextual nudge, not a hard signal.
-    Returns a small bias value between -0.15 and +0.15.
+    Fibonacci-zone-aware support/resistance nudge (v2). Instead of a flat
+    cutoff, the recent candle's position inside the swing-high/swing-low
+    range is mapped onto the classic Fibonacci retracement levels
+    (23.6% / 38.2% / 50% / 61.8% / 78.6%) - the same zones traders watch
+    for pullback/bounce reactions - for a graded bias instead of an
+    all-or-nothing threshold.
+    Returns a small bias value between -0.20 and +0.20.
     """
     recent = _last(candles, lookback)
     if len(recent) < 4:
@@ -633,11 +635,20 @@ def compute_support_resistance_context(candles, lookback=12):
     position = (last_mid - swing_high) / price_range
     position = max(0.0, min(1.0, position))
 
-    if position < 0.15:
-        return -0.15   # near resistance -> slight bearish nudge
-    elif position > 0.85:
-        return 0.15     # near support -> slight bullish nudge
-    return 0.0
+    # Graded Fibonacci zones: deepest pullback zones get the strongest nudge.
+    if position <= 0.10:
+        return -0.20    # at/above resistance -> strong bearish nudge
+    elif position <= 0.236:
+        return -0.12     # shallow pullback zone (23.6%)
+    elif position <= 0.382:
+        return -0.06     # 38.2% zone
+    elif position < 0.618:
+        return 0.0        # 50% zone -> no edge either way
+    elif position < 0.764:
+        return 0.06       # 61.8% zone
+    elif position < 0.90:
+        return 0.12       # 78.6% zone
+    return 0.20            # at/below support -> strong bullish nudge
 
 
 def compute_streak_bonus(candles, lookback=6):

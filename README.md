@@ -18,6 +18,20 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
+## 🆕 What's New — v21 (Real Colored Buttons)
+
+- 🎨 **Native colored buttons** — Telegram's Bot API 9.4 (Feb 9, 2026) added
+  a real `style` field for inline buttons: `primary` (blue), `success`
+  (green), `danger` (red) — no WebApp/hosting needed. Upgraded
+  `python-telegram-bot` to 22.8 (the version that supports it) and applied
+  colors across the bot: green for WIN/confirm/register/unblock actions,
+  red for LOSE/back/block/off actions, blue for the main trading actions
+  (Quick Analyze, AI Deep Scan, Admin Panel, plan purchases, etc).
+  Requires the *user's* Telegram app to be updated after Feb 2026 —
+  older clients just show the button unstyled, nothing breaks.
+
+---
+
 ## 🆕 What's New — v20 (Community Vote + Stochastic Engine)
 
 - 🗳️ **Group WIN/LOSE community vote** — every signal posted to a group now
