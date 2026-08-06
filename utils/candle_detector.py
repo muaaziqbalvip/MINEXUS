@@ -75,13 +75,58 @@ def crop_chart_area(img):
     """
     Isolates the actual chart/candle area, cropping away side panels, top
     bars, and bottom toolbars common in broker UIs.
+
+    Bug fix: the right-edge cut used to be a hardcoded 88% of image width,
+    which assumes every screenshot has a wide price-axis sidebar (true for
+    Quotex-style UIs). Charts without one (plain TradingView-style widgets,
+    verified on a real screenshot) have real, recent candles sitting past
+    that 88% line - those were being silently sliced off, so predictions
+    were being made on stale data missing the newest 3-4 candles, which is
+    exactly the data next-candle prediction needs most. Now we scan the
+    actual candle-colored pixels near the right edge and only fall back to
+    the 88% cut if there's no real candle content beyond it - so a genuine
+    price-axis sidebar still gets excluded, but real candles never do.
     """
     h, w = img.shape[:2]
     top = int(h * 0.10)
     bottom = int(h * 0.80)   # exclude bottom RSI/indicator strip
     left = int(w * 0.01)
-    right = int(w * 0.88)    # exclude right-side price axis/badge
+    right = int(w * 0.88)    # default: exclude right-side price axis/badge
+
+    right = max(right, _detect_real_right_edge(img, right, w, top, bottom))
+
     return img[top:bottom, left:right], (left, top)
+
+
+def _detect_real_right_edge(img, default_right, w, top, bottom):
+    """Scans for candle-colored tall column runs beyond the default crop
+    line; if found (a real cluster, not a single stray colored pixel),
+    extends the right boundary just past them instead of cutting them off.
+    Restricted to the same top:bottom candle band as the final crop - the
+    first version of this scanned the full image height and picked up
+    colored UI elements above the chart (e.g. red SELL/BUY price boxes) as
+    false "candles", which would have wrongly widened the crop on charts
+    that never actually needed it."""
+    try:
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        mask = _mask_for_ranges(hsv, GREEN_RANGES) | _mask_for_ranges(hsv, RED_RANGES)
+        mask = mask[top:bottom, :]
+        min_height = max(8, int((bottom - top) * 0.035))
+        tall_cols = []
+        for x in range(default_right, w):
+            col = mask[:, x]
+            on = np.nonzero(col)[0]
+            if len(on) == 0:
+                continue
+            gaps = np.where(np.diff(on) > 3)[0]
+            segs = np.split(on, gaps + 1) if len(gaps) else [on]
+            if max(len(s) for s in segs) >= min_height:
+                tall_cols.append(x)
+        if len(tall_cols) < 3:
+            return default_right  # no real cluster past the default line
+        return min(w, max(tall_cols) + 15)
+    except Exception:
+        return default_right
 
 
 def _column_runs(mask):
@@ -219,10 +264,48 @@ def detect_candles(image_path):
     if not all_slots:
         return [], cropped, offset
 
-    # Estimate a reference single-candle width from the narrower slots
-    # (helps decide which slots are actually 2+ merged candles)
+    # Fix: on thin/high-DPI screenshots (candle body only 2-3px wide), a
+    # single real candle's column-run sometimes gets cut into two adjacent
+    # slots by one column of anti-aliasing/gridline noise that drops just
+    # below min_height. Left unfixed, this duplicates the candle and
+    # corrupts the last-few-candles window every pattern/signal reads from
+    # (verified against a real chart screenshot — same-color slots 2-3px
+    # apart with near-identical top/bottom were being counted as two
+    # separate candles). Reunite same-color slots that are only a couple
+    # columns apart AND whose vertical spans overlap heavily — a genuinely
+    # separate adjacent candle almost never has the same body/wick range.
+    all_slots.sort(key=lambda s: s["x_start"])
+    merged_slots = []
+    for s in all_slots:
+        if merged_slots:
+            last = merged_slots[-1]
+            gap = s["x_start"] - last["x_end"] - 1
+            span = max(last["bottom"], s["bottom"]) - min(last["top"], s["top"])
+            overlap = min(last["bottom"], s["bottom"]) - max(last["top"], s["top"])
+            overlap_ratio = (overlap / span) if span > 0 else 1.0
+            if s["color"] == last["color"] and 0 <= gap <= 3 and overlap_ratio > 0.6:
+                last["x_end"] = s["x_end"]
+                last["top"] = min(last["top"], s["top"])
+                last["bottom"] = max(last["bottom"], s["bottom"])
+                continue
+        merged_slots.append(dict(s))
+    all_slots = merged_slots
+
+    # Estimate a reference single-candle BODY width from the slots (used to
+    # decide which slots are actually 2+ candles merged together).
+    # Bug fix: this used to take the flat median of ALL slot widths, but
+    # doji/small-range candles render with a much narrower footprint than
+    # full-bodied candles on some chart themes (verified on a real
+    # screenshot where ~half the slots were thin dojis) — that dragged the
+    # median down and made ordinary full-width candles look "too wide",
+    # triggering the merged-slot splitter on completely normal single
+    # candles and duplicating them in the output. Using the 65th percentile
+    # instead reliably lands on the full-body-candle width even when dojis
+    # make up close to half the chart, while still catching genuinely
+    # merged/wide slots (which are ~2x that width or more).
     widths = sorted(s["x_end"] - s["x_start"] + 1 for s in all_slots)
-    median_w = widths[len(widths) // 2]
+    ref_idx = min(len(widths) - 1, int(len(widths) * 0.65))
+    median_w = widths[ref_idx]
 
     final_slots = []
     for s in all_slots:

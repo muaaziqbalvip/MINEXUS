@@ -1026,11 +1026,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
     # ---------------- Open Admin Panel from main menu ----------------
-    elif data == "admin_open":
-        if not is_admin(user_id):
-            return
-        await show_admin_panel(query, context)
-
     # ---------------- Auto-Broadcast Settings ----------------
     elif data == "menu_broadcast_settings":
         auto_bc, selected_group = get_auto_broadcast_settings(user_id)
@@ -2042,7 +2037,17 @@ async def handle_admin_callback(query, context, data):
         await query.answer("Not authorized.", show_alert=True)
         return
 
-    if data == "admin_pending":
+    # Bug fix: the "🛠️ Admin Panel" button (callback_data="admin_open")
+    # starts with "admin_", so button_handler's ADMIN_CALLBACK_PREFIXES
+    # routing was already sending it here — but this function never had a
+    # matching case for it, so tapping the button silently did nothing.
+    # The real panel-rendering logic (show_admin_panel) existed but was
+    # sitting in a dead, unreachable elif branch further down in
+    # button_handler that this routing always intercepted first.
+    if data == "admin_open":
+        await show_admin_panel(query, context)
+
+    elif data == "admin_pending":
         pending = list_pending_payments()
         if not pending:
             await query.edit_message_text("✅ No pending payments.")

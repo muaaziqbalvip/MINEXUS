@@ -18,6 +18,40 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
+## 🆕 What's New — v24 (Real Prediction Bugs + Admin Button Fix)
+
+**Tested against a real uploaded chart screenshot end-to-end — found and
+fixed 3 more real bugs:**
+
+- 🐛 **Duplicate candle detection (big one).** On charts with thin/high-DPI
+  candle rendering, a single real candle was sometimes being split into
+  two near-identical detected candles by the merged-slot splitter, because
+  its reference "single candle width" was a flat median that got dragged
+  down by thin doji candles on the same chart. On the test chart this
+  inflated 155 real candles into 229 detected ones — and since candlestick
+  patterns compare the last 2-5 candles directly, a chunk of those pattern
+  reads were comparing a candle to its own near-duplicate. Fixed by
+  switching the reference-width estimate to the 65th percentile, which
+  reliably lands on the true single-candle width even when close to half
+  the chart is dojis. Verified: 229 → 155 candles, gap distribution
+  cleaned up from a spurious 2px spike to normal ~7-9px spacing.
+- 🛡️ **Right-edge crop safety net.** The chart-area crop hardcoded a fixed
+  88% width cut assuming every screenshot has a wide price-axis sidebar.
+  Added a scan that only extends the crop if it finds a real cluster of
+  candle-colored columns actually sitting past that line — protects
+  against silently losing the most recent candles on chart styles that
+  don't have that sidebar, without falsely triggering on chart types
+  that do.
+- 🔴 **"🛠️ Admin Panel" button did nothing.** Its callback
+  (`admin_open`) was being intercepted by the admin-prefix router and
+  handed to `handle_admin_callback`, which had no matching case for it —
+  so tapping the button silently did nothing. The actual panel-rendering
+  code existed but sat in a dead, unreachable branch further down that
+  never got a chance to run. Moved it to where routing actually delivers
+  the callback.
+
+---
+
 ## 🆕 What's New — v23 (Signal Accuracy Bug Fixes)
 
 **This is the important one — two real bugs were found and fixed:**
