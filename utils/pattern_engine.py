@@ -572,11 +572,16 @@ def compute_trend_bias(candles, lookback=8):
     if len(recent) >= 4:
         mid = len(recent) // 2
         first_half, second_half = recent[:mid], recent[mid:]
-        fh_high = max(c.wick_top for c in first_half)
-        fh_low = min(c.wick_bottom for c in first_half)
-        sh_high = max(c.wick_top for c in second_half)
-        sh_low = min(c.wick_bottom for c in second_half)
-        # Image y-coords: smaller y = higher price.
+        # Image y-coords: smaller y = higher price, so the true swing HIGH of
+        # a half is the MINIMUM wick_top and the true swing LOW is the MAXIMUM
+        # wick_bottom (this was previously inverted — using max()/min() the
+        # wrong way round picked the weakest peak/shallowest dip instead of
+        # the actual swing extremes, which distorted the structure read on
+        # anything but a clean monotonic trend).
+        fh_high = min(c.wick_top for c in first_half)
+        fh_low = max(c.wick_bottom for c in first_half)
+        sh_high = min(c.wick_top for c in second_half)
+        sh_low = max(c.wick_bottom for c in second_half)
         if sh_high < fh_high and sh_low < fh_low:
             structure = 0.3
         elif sh_high > fh_high and sh_low > fh_low:

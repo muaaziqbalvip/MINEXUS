@@ -18,6 +18,35 @@ Treat it as an educational aid, not financial advice.
 
 ---
 
+## 🆕 What's New — v23 (Signal Accuracy Bug Fixes)
+
+**This is the important one — two real bugs were found and fixed:**
+
+- 🚨 **AI Deep Scan was silently doing nothing.** The model chain
+  (`meta-llama/llama-4-scout-17b-16e-instruct`,
+  `meta-llama/llama-4-maverick-17b-128e-instruct`) was deprecated by Groq —
+  every single AI vision call was failing and quietly falling back to the
+  local-only prediction (by design, so it never crashed — but it meant "AI
+  Deep Scan" was functionally identical to "Quick Analyze" the whole time).
+  Fixed by switching to `qwen/qwen3.6-27b`, which is Groq's current — and
+  only — vision-capable model as of this writing. AI analysis is now
+  actually running again.
+- 🐛 **Trend-structure calculation had an inverted min/max.**
+  `compute_trend_bias()`'s swing-high/swing-low read was using `max()` for
+  "high" and `min()` for "low" on image y-coordinates, which is backwards
+  (smaller y = higher price on a chart image). This happened to cancel out
+  on a clean monotonic trend, but distorted the structure signal on mixed/
+  choppy charts — exactly the conditions where a bad read matters most.
+  Fixed to match the correct convention already used elsewhere in the file.
+
+Both were verified with synthetic candle data before and after the fix.
+If signals still feel off after this update, it helps a lot to know
+*specifically* what's wrong (e.g. "confidence is way too high on choppy
+charts", "a screenshot of X pattern got read as Y") — that's the fastest
+way to catch the next real bug instead of guessing.
+
+---
+
 ## 🆕 What's New — v22 (Full Colors + Chat Menu + Double Top/Bottom)
 
 - 🎨 **All buttons now colored** — 99 of the bot's 107 buttons carry a real

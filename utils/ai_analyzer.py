@@ -41,10 +41,15 @@ except ImportError:
         GROQ_SDK_AVAILABLE = False
         RateLimitError = Exception
 
-# Model priority chain: fast first, powerful as backup
+# Model priority chain: only qwen/qwen3.6-27b currently supports vision on
+# Groq (verified — the old llama-4-scout/llama-4-maverick vision models were
+# deprecated by Groq and no longer work; the recommended text-only successor,
+# openai/gpt-oss-120b, does NOT accept image input at all). Every chart
+# analysis was silently failing before this fix and falling back to the
+# local-only prediction, which is why AI Deep Scan wasn't actually improving
+# anything. qwen3.6-27b is Groq's current — and only — vision-capable model.
 MODEL_CHAIN = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "qwen/qwen3.6-27b",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
